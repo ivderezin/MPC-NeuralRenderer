@@ -98,6 +98,7 @@
     <ClCompile Include="Upscaling\DlssSuperResolution.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="FrameGeneration\DlssMultiFrameGeneration.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="FrameGeneration\PresentationTimer.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="FrameGeneration\PresentationThread.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="csputils.cpp" />
     <ClCompile Include="CustomAllocator.cpp" />
     <ClCompile Include="D3D11VP.cpp" />
@@ -146,6 +147,8 @@
     <ClInclude Include="FrameGeneration\DlssMultiFrameGeneration.h" />
     <ClInclude Include="FrameGeneration\FramePlan.h" />
     <ClInclude Include="FrameGeneration\PresentationTimer.h" />
+    <ClInclude Include="FrameGeneration\PresentationThread.h" />
+    <ClInclude Include="FrameGeneration\FrameQueue.h" />
     <ClInclude Include="csputils.h" />
     <ClInclude Include="CustomAllocator.h" />
     <ClInclude Include="D3D11VP.h" />

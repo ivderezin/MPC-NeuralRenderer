@@ -220,7 +220,7 @@ struct NeuralPass::Impl {
     UINT width = 0, height = 0;
     RECT rect{};
     DXGI_FORMAT sourceFormat = DXGI_FORMAT_UNKNOWN;
-    ComPtr<ID3D11Texture2D> source, previous, display;
+    ComPtr<ID3D11Texture2D> source, previous;
     ComPtr<ID3D11ShaderResourceView> sourceView, previousView;
     ComPtr<ID3D11ComputeShader> prepare, motion;
     ComPtr<ID3D11Buffer> constants;
@@ -236,8 +236,12 @@ struct NeuralPass::Impl {
     std::wstring nrFailure, srFailure, fgFailure;
     SharedTexture scaled;
     std::array<SharedTexture, 3> generated;
-    ComPtr<ID3D11Texture2D> displayScaled;
-    std::array<ComPtr<ID3D11Texture2D>, 3> displayGenerated;
+    // Completed output is double buffered by batch serial, so a queued batch stays intact while the
+    // next one is collected.
+    std::array<ComPtr<ID3D11Texture2D>, 2> displayReal;
+    std::array<std::array<ComPtr<ID3D11Texture2D>, 3>, 2> displayGenerated;
+    std::array<unsigned long long, 2> slotSerial{};
+    std::array<unsigned, 2> slotGenerated{};
     ID3D11Texture2D* published = nullptr;
     ID3D11Texture2D* pendingReal = nullptr;
     bool pendingScaled = false, pendingHasFG = false;
@@ -444,7 +448,6 @@ struct NeuralPass::Impl {
         desc.MiscFlags = 0;
         desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
         Check(device->CreateTexture2D(&desc, nullptr, &previous), "Create previous frame");
-        Check(device->CreateTexture2D(&desc, nullptr, &display), "Create completed NR frame");
         Check(device->CreateShaderResourceView(previous.Get(), nullptr, &previousView), "Create previous SRV");
         prepare = Compile(device, PrepareShader);
         motion = Compile(device, MotionShader);
@@ -534,11 +537,6 @@ struct NeuralPass::Impl {
             upscaling::ShouldUpscale({width, height}, target, monitor)) {
             try {
                 scaled.Create(device, device12.Get(), target.width, target.height, DXGI_FORMAT_R8G8B8A8_UNORM);
-                D3D11_TEXTURE2D_DESC desc{};
-                scaled.texture->GetDesc(&desc);
-                desc.MiscFlags = 0;
-                desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-                Check(device->CreateTexture2D(&desc, nullptr, &displayScaled), "Create upscaled display frame");
                 if (options.upscaler == processing::Upscaler::Dlss && !coreInitialized)
                     throw std::runtime_error(std::string(ngxFailure.begin(), ngxFailure.end()));
                 superResolution.Create(options.upscaler, device12.Get(), list.Get(), {width, height}, target,
@@ -567,15 +565,28 @@ struct NeuralPass::Impl {
                                ModuleDirectory());
         for (unsigned i = 0; i < 3; ++i) {
             generated[i].Create(device11.Get(), device12.Get(), outWidth, outHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
-            D3D11_TEXTURE2D_DESC desc{};
-            generated[i].texture->GetDesc(&desc);
-            desc.MiscFlags = 0;
-            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-            Check(device11->CreateTexture2D(&desc, nullptr, &displayGenerated[i]), "Create MFG display frame");
+            for (auto& slot : displayGenerated)
+                DisplayCopy(slot[i], generated[i].texture.Get());
         }
         fgUsable = true;
         fgNeedsReset = true;
         recreateFG = false;
+    }
+    // Creates or reuses a shader-readable copy target matching source.
+    void DisplayCopy(ComPtr<ID3D11Texture2D>& target, ID3D11Texture2D* source) {
+        D3D11_TEXTURE2D_DESC desc{};
+        source->GetDesc(&desc);
+        if (target) {
+            D3D11_TEXTURE2D_DESC current{};
+            target->GetDesc(&current);
+            if (current.Width == desc.Width && current.Height == desc.Height && current.Format == desc.Format)
+                return;
+            target.Reset();
+        }
+        desc.MiscFlags = desc.CPUAccessFlags = 0;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        Check(device11->CreateTexture2D(&desc, nullptr, &target), "Create completed display frame");
     }
     void Transition(bool begin, bool outputRead = false) {
         std::array<D3D12_RESOURCE_BARRIER, 4> barriers{};
@@ -612,15 +623,19 @@ struct NeuralPass::Impl {
         if (asyncOutput.Collect(completed)) {
             // Already completed: acquire the shared resource without waiting for inference.
             Check(context11->Wait(fence11.Get(), submitted), "Acquire completed NR output");
-            published = pendingScaled ? displayScaled.Get() : display.Get();
+            ++serial;
+            const auto slot = static_cast<size_t>(serial & 1);
+            DisplayCopy(displayReal[slot], pendingReal);
+            published = displayReal[slot].Get();
             context11->CopyResource(published, pendingReal);
             generatedCount = pendingHasFG ? frameGeneration.Collect() : 0;
             if (pendingHasFG && !generatedCount)
                 ++discardedBatches;
             for (unsigned i = 0; i < generatedCount; ++i)
-                context11->CopyResource(displayGenerated[i].Get(), generated[i].texture.Get());
+                context11->CopyResource(displayGenerated[slot][i].Get(), generated[i].texture.Get());
+            slotSerial[slot] = serial;
+            slotGenerated[slot] = generatedCount;
             outputDuration = pendingDuration;
-            ++serial;
             ReadTiming();
         }
         if (action == FrameHistory::Action::Repeat)
@@ -792,16 +807,21 @@ unsigned long long NeuralPass::OutputSerial() const {
 long long NeuralPass::OutputDuration() const {
     return impl_ ? impl_->outputDuration : 0;
 }
-ID3D11Texture2D* NeuralPass::PresentationFrame(unsigned index) const {
+ID3D11Texture2D* NeuralPass::PresentationFrame(unsigned long long batch, unsigned index) const {
     if (!impl_ || !impl_->asyncOutput.Available())
         return nullptr;
-    return index < impl_->generatedCount ? impl_->displayGenerated[index].Get() : impl_->published;
+    const auto slot = static_cast<size_t>(batch & 1);
+    if (impl_->slotSerial[slot] != batch)
+        return nullptr;
+    return index < impl_->slotGenerated[slot] ? impl_->displayGenerated[slot][index].Get()
+                                               : impl_->displayReal[slot].Get();
 }
 NeuralPass::NeuralPass() = default;
 NeuralPass::~NeuralPass() = default;
 void NeuralPass::Configure(Settings settings) {
     settings.intensity = std::clamp(settings.intensity, 0, 200);
     settings.frameMultiplier = std::clamp(settings.frameMultiplier, 1u, 4u);
+    settings.presentThread = false; // presentation mode does not affect processing
     if (settings_ == settings)
         return;
     settings_ = settings;
@@ -918,7 +938,7 @@ unsigned long long NeuralPass::OutputSerial() const {
 long long NeuralPass::OutputDuration() const {
     return 0;
 }
-ID3D11Texture2D* NeuralPass::PresentationFrame(unsigned) const {
+ID3D11Texture2D* NeuralPass::PresentationFrame(unsigned long long, unsigned) const {
     return nullptr;
 }
 }

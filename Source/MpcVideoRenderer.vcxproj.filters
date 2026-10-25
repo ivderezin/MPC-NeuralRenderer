@@ -25,12 +25,15 @@
     <ClCompile Include="Upscaling\DlssSuperResolution.cpp"><Filter>Upscaling</Filter></ClCompile>
     <ClCompile Include="FrameGeneration\DlssMultiFrameGeneration.cpp"><Filter>FrameGeneration</Filter></ClCompile>
     <ClCompile Include="FrameGeneration\PresentationTimer.cpp"><Filter>FrameGeneration</Filter></ClCompile>
+    <ClCompile Include="FrameGeneration\PresentationThread.cpp"><Filter>FrameGeneration</Filter></ClCompile>
     <ClInclude Include="Ngx\Feature.h"><Filter>Ngx</Filter></ClInclude>
     <ClInclude Include="Upscaling\UpscalePolicy.h"><Filter>Upscaling</Filter></ClInclude>
     <ClInclude Include="Upscaling\DlssSuperResolution.h"><Filter>Upscaling</Filter></ClInclude>
     <ClInclude Include="FrameGeneration\DlssMultiFrameGeneration.h"><Filter>FrameGeneration</Filter></ClInclude>
     <ClInclude Include="FrameGeneration\FramePlan.h"><Filter>FrameGeneration</Filter></ClInclude>
     <ClInclude Include="FrameGeneration\PresentationTimer.h"><Filter>FrameGeneration</Filter></ClInclude>
+    <ClInclude Include="FrameGeneration\PresentationThread.h"><Filter>FrameGeneration</Filter></ClInclude>
+    <ClInclude Include="FrameGeneration\FrameQueue.h"><Filter>FrameGeneration</Filter></ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="NeuralRendering"><UniqueIdentifier>{A45E9A47-5365-47C2-BCEE-72FCCFBC1A44}</UniqueIdentifier></Filter>

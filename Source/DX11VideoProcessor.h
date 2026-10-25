@@ -29,6 +29,9 @@
 #include "NeuralRendering/NeuralPass.h"
 #include "FrameGeneration/FramePlan.h"
 #include "FrameGeneration/PresentationTimer.h"
+#include "FrameGeneration/FrameQueue.h"
+#include "FrameGeneration/PresentationThread.h"
+#include <mutex>
 #include "FrameGeneration/XessPresenter.h"
 #include "DX11Helper.h"
 #include "D3D11VP.h"
@@ -54,8 +57,14 @@ private:
 	HRESULT PresentFrame(unsigned syncInterval, bool running);
 	SIZE m_neuralMonitorSize{};
 	double m_neuralRefreshHz = 60;
-	framegen::FramePlan m_mfgPlan;
-	framegen::PresentationTimer m_mfgTimer;
+	framegen::FramePlan m_mfgPlan;          // UI-timer mode
+	framegen::PresentationTimer m_mfgTimer; // UI-timer mode
+	framegen::FrameQueue m_mfgQueue;        // dedicated-thread mode, guarded by m_mfgQueueLock
+	std::mutex m_mfgQueueLock;
+	framegen::PresentationThread m_mfgThread;
+	HRESULT DrawPresentationFrame(ID3D11Texture2D* frame);
+	bool NextQueuedDeadline(std::int64_t& deadline);
+	bool PresentQueuedFrame();
 	unsigned long long m_mfgSerial = 0;
 	bool m_mfgActive = false;
 	int m_pipelineRotation = 0;

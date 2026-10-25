@@ -44,7 +44,8 @@ int main() {
         using processing::FrameGenerator;
         using processing::Upscaler;
         auto settings = neural::Settings::Load();
-        Require(settings.upscaler == Upscaler::Dlss && settings.frameMultiplier == 1, "Defaults changed");
+        Require(settings.upscaler == Upscaler::Dlss && settings.frameMultiplier == 1 && !settings.presentThread,
+                "Defaults changed");
         registry.Write(L"DlssUpscaling", 0);
         Require(neural::Settings::Load().upscaler == Upscaler::Off, "Legacy disabled SR must migrate");
         for (auto upscaler : {Upscaler::Off, Upscaler::Dlss, Upscaler::Fsr, Upscaler::Xess})
@@ -54,6 +55,7 @@ int main() {
                 settings.frameMultiplier = 4;
                 settings.enabled = true;
                 settings.intensity = 200;
+                settings.presentThread = generator == FrameGenerator::Fsr;
                 Require(settings.Save() == ERROR_SUCCESS, "Save failed");
                 Require(neural::Settings::Load() == settings, "Independent provider settings did not survive reload");
             }

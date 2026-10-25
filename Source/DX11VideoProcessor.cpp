@@ -463,6 +463,8 @@ CDX11VideoProcessor::CDX11VideoProcessor(CMpcVideoRenderer* pFilter, const Setti
 
 CDX11VideoProcessor::~CDX11VideoProcessor()
 {
+	m_mfgThread.Stop();
+
 	for (const auto& [displayName, state] : m_hdrModeSavedState) {
 		DisplayConfig_t displayConfig = {};
 		if (GetDisplayConfig(displayName.c_str(), displayConfig)) {
@@ -3116,12 +3118,31 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 			LARGE_INTEGER now{}, frequency{};
 			QueryPerformanceCounter(&now); QueryPerformanceFrequency(&frequency);
 			const auto duration = static_cast<long long>(static_cast<double>(m_neuralPass.OutputDuration()) * frequency.QuadPart / 10000000.0);
-			m_mfgPlan.Start(now.QuadPart,duration,generatedCount,m_neuralRefreshHz,static_cast<double>(frequency.QuadPart));
-			m_mfgActive = m_mfgPlan.Pending()
-				&& GetPropW(m_pFilter->m_hWndParentMain,L"MPCNeuralRenderer.This") == m_pFilter;
-			if (m_mfgActive) {
-				try { m_mfgTimer.Schedule(m_pFilter->m_hWndParentMain,m_mfgPlan.NextDeadline(),frequency.QuadPart); }
-				catch (...) { StopMfgPresentation(); }
+			if (m_processingSettings.presentThread) {
+				bool queued;
+				{
+					std::lock_guard lock(m_mfgQueueLock);
+					queued = m_mfgQueue.Add(now.QuadPart, duration, generatedCount, m_neuralRefreshHz,
+						static_cast<double>(frequency.QuadPart), outputSerial);
+					if (!queued) m_mfgQueue.Clear();
+				}
+				m_mfgActive = queued;
+				if (m_mfgActive) {
+					try {
+						m_mfgThread.Start([this](std::int64_t& deadline) { return NextQueuedDeadline(deadline); },
+							[this] { return PresentQueuedFrame(); });
+						m_mfgThread.Wake();
+					}
+					catch (...) { StopMfgPresentation(); }
+				}
+			} else {
+				m_mfgPlan.Start(now.QuadPart,duration,generatedCount,m_neuralRefreshHz,static_cast<double>(frequency.QuadPart));
+				m_mfgActive = m_mfgPlan.Pending()
+					&& GetPropW(m_pFilter->m_hWndParentMain,L"MPCNeuralRenderer.This") == m_pFilter;
+				if (m_mfgActive) {
+					try { m_mfgTimer.Schedule(m_pFilter->m_hWndParentMain,m_mfgPlan.NextDeadline(),frequency.QuadPart); }
+					catch (...) { StopMfgPresentation(); }
+				}
 			}
 		}
 		if (m_mfgActive) return S_OK;
@@ -3236,53 +3257,96 @@ void CDX11VideoProcessor::StopMfgPresentation()
 {
 	if (m_mfgActive) ++m_mfgCounters.stops;
 	m_mfgTimer.Cancel(); m_mfgPlan.Clear(); m_mfgSerial = 0; m_mfgActive = false;
+	{
+		std::lock_guard lock(m_mfgQueueLock);
+		m_mfgQueue.Clear();
+	}
+	m_mfgThread.Wake();
 }
 
+HRESULT CDX11VideoProcessor::DrawPresentationFrame(ID3D11Texture2D* frame)
+{
+	Tex2D_t texture;
+	texture.pTexture = frame; frame->GetDesc(&texture.desc);
+	CComPtr<ID3D11Texture2D> backBuffer;
+	HRESULT hr = GetDrawingBuffer(&backBuffer);
+	if (SUCCEEDED(hr)) hr = m_pDevice->CreateShaderResourceView(frame,nullptr,&texture.pShaderResource);
+	if (FAILED(hr)) return hr;
+	CComPtr<ID3D11RenderTargetView> target;
+	if (SUCCEEDED(m_pDevice->CreateRenderTargetView(backBuffer,nullptr,&target))) {
+		const float black[4] = {0,0,0,1}; m_pDeviceContext->ClearRenderTargetView(target,black);
+	}
+	hr = DrawProcessedTexture(texture,backBuffer,CRect(0,0,texture.desc.Width,texture.desc.Height),m_videoRect,m_pipelineRotation);
+	if (SUCCEEDED(hr)) DrawSubtitles(backBuffer);
+	if (SUCCEEDED(hr) && m_bShowStats) DrawStats(backBuffer);
+	if (SUCCEEDED(hr) && m_bAlphaBitmapEnable) {
+		D3D11_TEXTURE2D_DESC desc{}; backBuffer->GetDesc(&desc);
+		D3D11_VIEWPORT viewport{m_AlphaBitmapNRectDest.left*desc.Width,m_AlphaBitmapNRectDest.top*desc.Height,
+			(m_AlphaBitmapNRectDest.right-m_AlphaBitmapNRectDest.left)*desc.Width,
+			(m_AlphaBitmapNRectDest.bottom-m_AlphaBitmapNRectDest.top)*desc.Height,0,1};
+		AlphaBlt(m_TexAlphaBitmap.pShaderResource,backBuffer,m_pAlphaBitmapVertex,&viewport,m_pSamplerLinear);
+	}
+	if (SUCCEEDED(hr)) {
+		g_bPresent = true; hr = PresentFrame(0, false); g_bPresent = false;
+	}
+	return hr;
+}
+
+// Legacy mode: timer message handled on the player's window thread.
 void CDX11VideoProcessor::PresentGeneratedFrames()
 {
-	if (!m_mfgActive || !m_pDXGISwapChain1 || m_pFilter->m_filterState != State_Running
-		|| m_mfgSerial != m_neuralPass.OutputSerial()) {
-		StopMfgPresentation(); return;
+	if (!m_mfgActive || m_processingSettings.presentThread || !m_pDXGISwapChain1
+		|| m_pFilter->m_filterState != State_Running || m_mfgSerial != m_neuralPass.OutputSerial()) {
+		if (!m_processingSettings.presentThread) StopMfgPresentation();
+		return;
 	}
 	LARGE_INTEGER now{}, frequency{};
 	QueryPerformanceCounter(&now); QueryPerformanceFrequency(&frequency);
 	const int index = m_mfgPlan.TakeDue(now.QuadPart, &m_mfgCounters.skipped);
 	if (index >= 0) {
-		auto* frame = m_neuralPass.PresentationFrame(static_cast<unsigned>(index));
-		if (!frame) { StopMfgPresentation(); return; }
-		Tex2D_t texture;
-		texture.pTexture = frame; frame->GetDesc(&texture.desc);
-		CComPtr<ID3D11Texture2D> backBuffer;
-		HRESULT hr = GetDrawingBuffer(&backBuffer);
-		if (SUCCEEDED(hr)) hr = m_pDevice->CreateShaderResourceView(frame,nullptr,&texture.pShaderResource);
+		auto* frame = m_neuralPass.PresentationFrame(m_mfgSerial, static_cast<unsigned>(index));
+		const HRESULT hr = frame ? DrawPresentationFrame(frame) : E_FAIL;
 		if (FAILED(hr)) { StopMfgPresentation(); return; }
-		CComPtr<ID3D11RenderTargetView> target;
-		if (SUCCEEDED(m_pDevice->CreateRenderTargetView(backBuffer,nullptr,&target))) {
-			const float black[4] = {0,0,0,1}; m_pDeviceContext->ClearRenderTargetView(target,black);
-		}
-		hr = DrawProcessedTexture(texture,backBuffer,CRect(0,0,texture.desc.Width,texture.desc.Height),m_videoRect,m_pipelineRotation);
-		if (SUCCEEDED(hr)) DrawSubtitles(backBuffer);
-		if (SUCCEEDED(hr) && m_bShowStats) DrawStats(backBuffer);
-		if (SUCCEEDED(hr) && m_bAlphaBitmapEnable) {
-			D3D11_TEXTURE2D_DESC desc{}; backBuffer->GetDesc(&desc);
-			D3D11_VIEWPORT viewport{m_AlphaBitmapNRectDest.left*desc.Width,m_AlphaBitmapNRectDest.top*desc.Height,
-				(m_AlphaBitmapNRectDest.right-m_AlphaBitmapNRectDest.left)*desc.Width,
-				(m_AlphaBitmapNRectDest.bottom-m_AlphaBitmapNRectDest.top)*desc.Height,0,1};
-			AlphaBlt(m_TexAlphaBitmap.pShaderResource,backBuffer,m_pAlphaBitmapVertex,&viewport,m_pSamplerLinear);
-		}
-		if (SUCCEEDED(hr)) {
-			g_bPresent = true; hr = PresentFrame(0, false); g_bPresent = false;
-			if (SUCCEEDED(hr)) {
-				if (static_cast<unsigned>(index) < m_neuralPass.GeneratedCount()) m_mfgCounters.generated++;
-				else m_mfgCounters.real++;
-			}
-		}
-		if (FAILED(hr)) { StopMfgPresentation(); return; }
+		if (static_cast<unsigned>(index) < m_neuralPass.GeneratedCount()) m_mfgCounters.generated++;
+		else m_mfgCounters.real++;
 	}
 	if (m_mfgPlan.Pending()) {
 		try { m_mfgTimer.Schedule(m_pFilter->m_hWndParentMain,m_mfgPlan.NextDeadline(),frequency.QuadPart); }
 		catch (...) { StopMfgPresentation(); }
 	}
+}
+
+// Dedicated-thread mode: called on m_mfgThread.
+bool CDX11VideoProcessor::NextQueuedDeadline(std::int64_t& deadline)
+{
+	std::lock_guard lock(m_mfgQueueLock);
+	if (!m_mfgQueue.Pending()) return false;
+	deadline = m_mfgQueue.NextDeadline();
+	return true;
+}
+
+bool CDX11VideoProcessor::PresentQueuedFrame()
+{
+	// A try-lock keeps shutdown deadlock-free: the thread is joined by callers that may hold this lock.
+	if (!m_pFilter->m_RendererLock.TryLock()) return false;
+	struct Unlock { CCritSec& lock; ~Unlock() { lock.Unlock(); } } unlock{m_pFilter->m_RendererLock};
+	LARGE_INTEGER now{};
+	QueryPerformanceCounter(&now);
+	std::optional<framegen::QueuedFrame> frame;
+	{
+		std::lock_guard lock(m_mfgQueueLock);
+		frame = m_mfgQueue.TakeDue(now.QuadPart, &m_mfgCounters.skipped);
+	}
+	if (!frame) return true;
+	if (!m_mfgActive || !m_pDXGISwapChain1 || m_pFilter->m_filterState != State_Running) {
+		StopMfgPresentation(); return true;
+	}
+	auto* texture = m_neuralPass.PresentationFrame(frame->batch, frame->texture);
+	if (!texture) { m_mfgCounters.skipped++; return true; } // batch already overwritten
+	if (FAILED(DrawPresentationFrame(texture))) { StopMfgPresentation(); return true; }
+	if (frame->real) m_mfgCounters.real++;
+	else m_mfgCounters.generated++;
+	return true;
 }
 
 HRESULT CDX11VideoProcessor::FillBlack()
@@ -4965,9 +5029,10 @@ HRESULT CDX11VideoProcessor::DrawStats(ID3D11Texture2D* pRenderTarget)
 	}
 	str += std::format(L"\nOutput: {:.1f} fps (all presents)", m_outputStats.GetAverageFps());
 	if (m_mfgActive || m_mfgCounters.generated || m_mfgCounters.stops) {
-		str += std::format(L"\nMFG presents: generated {}, real {}, late-skipped {}, plan stops {}, lock retries {}",
-			m_mfgCounters.generated, m_mfgCounters.real, m_mfgCounters.skipped, m_mfgCounters.stops,
-			framegen::PresentationTimer::RetryCount());
+		const bool thread = m_processingSettings.presentThread;
+		str += std::format(L"\nMFG presents ({}): generated {}, real {}, late-skipped {}, plan stops {}, lock retries {}",
+			thread ? L"thread" : L"UI timer", m_mfgCounters.generated, m_mfgCounters.real, m_mfgCounters.skipped,
+			m_mfgCounters.stops, thread ? m_mfgThread.Retries() : framegen::PresentationTimer::RetryCount());
 	}
 	str.append(m_strStatsDispInfo);
 	str += std::format(L"\nGraph. Adapter: {}", m_strAdapterDescription);

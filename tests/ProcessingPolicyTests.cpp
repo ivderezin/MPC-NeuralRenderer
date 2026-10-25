@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../Source/Upscaling/UpscalePolicy.h"
 #include "../Source/FrameGeneration/FramePlan.h"
+#include "../Source/FrameGeneration/FrameQueue.h"
 #include "../Source/FrameGeneration/GenerationPolicy.h"
 #include "../Source/NeuralRendering/NeuralSettings.h"
 #include <cstdlib>
@@ -62,5 +63,38 @@ int main() {
     Require(!plan.Pending(),"reset or disabled interpolation must not produce synthetic frames");
     plan.Start(0,4000,3,std::numeric_limits<double>::quiet_NaN(),240000);
     Require(!plan.Pending(),"invalid refresh rate must not create presentation deadlines");
+    {
+        // 60fps at 240Hz with 2 generated frames: deadlines at 0, 1333 and 2666 ticks of a 240kHz clock.
+        framegen::FrameQueue queue;
+        Require(queue.Add(0,4000,2,240,240000,1),"queue must accept a displayable batch");
+        Require(!queue.TakeDue(-1),"queued frames must never be presented early");
+        auto frame = queue.TakeDue(0);
+        Require(frame && frame->batch==1 && frame->texture==0 && !frame->real,"first generated frame starts the batch");
+        frame = queue.TakeDue(1333);
+        Require(frame && frame->texture==1 && !frame->real,"second generated frame keeps its position");
+        // The next batch arrives before the previous real frame was shown: it must queue behind it.
+        Require(queue.Add(2000,4000,2,240,240000,2),"early batch must be queued");
+        frame = queue.TakeDue(2666);
+        Require(frame && frame->batch==1 && frame->real,"previous real frame must not be dropped by an early batch");
+        Require(queue.NextDeadline()==3999,"queued batch starts one step after the previous real frame");
+        frame = queue.TakeDue(3999);
+        Require(frame && frame->batch==2 && frame->texture==0,"queued batch follows the previous real frame");
+        unsigned skipped = 0;
+        frame = queue.TakeDue(100000,&skipped);
+        Require(frame && frame->batch==2 && frame->real && skipped==1 && !queue.Pending(),"late wakeup shows the latest due frame");
+
+        queue.Clear();
+        Require(queue.Add(0,4000,2,240,240000,5),"queue must accept batch 5");
+        Require(queue.Add(100,4000,2,240,240000,7),"queue must accept batch 7");
+        frame = queue.TakeDue(100);
+        Require(frame && frame->batch==7,"a non-adjacent batch must not keep a frame from an overwritten texture slot");
+
+        queue.Clear();
+        Require(queue.Add(0,4000,2,240,240000,1),"queue must accept batch 1");
+        Require(queue.Add(0,1000,2,960,240000,2),"queue must accept a short batch");
+        frame = queue.TakeDue(0);
+        Require(frame && frame->batch==2 && frame->texture==0,"added latency must stay below one batch");
+        Require(!queue.Add(0,4000,3,60,240000,3),"undisplayable batch must be rejected");
+    }
     std::cout << "Upscaling and MFG scheduling tests passed\n";
 }

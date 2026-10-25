@@ -30,6 +30,10 @@ Settings Settings::Load() {
     if (RegGetValueW(HKEY_CURRENT_USER, Key, L"FrameMultiplier", RRF_RT_REG_DWORD, nullptr, &value, &size) ==
         ERROR_SUCCESS)
         settings.frameMultiplier = std::clamp(static_cast<unsigned>(value), 1u, 4u);
+    size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER, Key, L"MfgPresentThread", RRF_RT_REG_DWORD, nullptr, &value, &size) ==
+        ERROR_SUCCESS)
+        settings.presentThread = value != 0;
     return settings;
 }
 long Settings::Save() const {
@@ -47,6 +51,7 @@ long Settings::Save() const {
     DWORD upscaleValue = static_cast<DWORD>(upscaler);
     DWORD generatorValue = static_cast<DWORD>(frameGenerator);
     DWORD multiplierValue = std::clamp(frameMultiplier, 1u, 4u);
+    DWORD presentThreadValue = presentThread ? 1 : 0;
     if (error == ERROR_SUCCESS)
         error = RegSetValueExW(key, L"Upscaler", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&upscaleValue),
                                sizeof(upscaleValue));
@@ -56,6 +61,9 @@ long Settings::Save() const {
     if (error == ERROR_SUCCESS)
         error = RegSetValueExW(key, L"FrameGenerator", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&generatorValue),
                                sizeof(generatorValue));
+    if (error == ERROR_SUCCESS)
+        error = RegSetValueExW(key, L"MfgPresentThread", 0, REG_DWORD,
+                               reinterpret_cast<const BYTE*>(&presentThreadValue), sizeof(presentThreadValue));
     RegCloseKey(key);
     return error;
 }

@@ -16,6 +16,7 @@
    - **Enable neural rendering**, **Intensity** — NR, интенсивность 0–200%.
    - **Upscaling** — Off / DLSS SR / FSR 3.1 / XeSS.
    - **Frame generation** — DLSS MFG / FSR FG / XeSS FG; **Multiplier** — Off / 2x / 3x / 4x.
+   - **Present DLSS / FSR generated frames from a dedicated thread** — показ сгенерированных кадров из отдельного потока с очередью пакетов вместо таймера в UI-потоке плеера. Меньше опозданий и потерянных реальных кадров; задержка — до одного интервала между кадрами.
 6. Нажмите **Apply**. Включите **Show statistics**, чтобы увидеть выбранные режимы, состояние обработки и причину отказа, если функция недоступна.
 
 Апскейлер и генератор выбираются независимо: например, FSR + XeSS FG или XeSS + DLSS MFG. NR также включается отдельно. Это дополнительный DirectShow-рендерер: регистрация штатного MPC Video Renderer и настройки его вывода сохраняются. Для удаления закройте плеер и запустите `Uninstall_MPCVR_64.cmd` от администратора.
@@ -60,6 +61,7 @@ Video neural rendering, DLSS / FSR / XeSS upscaling, and frame generation inside
    - **Enable neural rendering**, **Intensity** — NR with 0–200% intensity.
    - **Upscaling** — Off / DLSS SR / FSR 3.1 / XeSS.
    - **Frame generation** — DLSS MFG / FSR FG / XeSS FG; **Multiplier** — Off / 2x / 3x / 4x.
+   - **Present DLSS / FSR generated frames from a dedicated thread** — presents generated frames from a dedicated thread with a queued schedule instead of a timer on the player's UI thread. Fewer late and dropped real frames, at up to one frame interval of extra latency.
 6. Click **Apply**. Enable **Show statistics** to see the selected modes, processing status, and the reason if a feature is unavailable.
 
 Select the upscaler and frame generator independently: for example, FSR + XeSS FG or XeSS + DLSS MFG. NR is also enabled separately. This is an additional DirectShow renderer: the stock MPC Video Renderer registration and output settings are preserved. To uninstall, close the player and run `Uninstall_MPCVR_64.cmd` as administrator.

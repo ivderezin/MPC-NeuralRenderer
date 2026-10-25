@@ -87,6 +87,7 @@ void CVRMainPPage::SetControls()
 	ComboBox_SelectByItemData(m_hWnd, IDC_FRAME_GENERATOR, static_cast<unsigned>(m_neuralSettings.frameGenerator));
 	ComboBox_SelectByItemData(m_hWnd, IDC_DLSS_MFG, m_neuralSettings.frameMultiplier);
 	CheckDlgButton(IDC_NEURAL_ENABLED, m_neuralSettings.enabled ? BST_CHECKED : BST_UNCHECKED);
+	CheckDlgButton(IDC_MFG_PRESENT_THREAD, m_neuralSettings.presentThread ? BST_CHECKED : BST_UNCHECKED);
 	ComboBox_SelectByItemData(m_hWnd, IDC_NEURAL_INTENSITY, m_neuralSettings.intensity);
 
 	CheckDlgButton(IDC_CHECK1, m_SetsPP.bUseD3D11             ? BST_CHECKED : BST_UNCHECKED);
@@ -155,6 +156,7 @@ void CVRMainPPage::EnableControls()
 	GetDlgItem(IDC_UPSCALER).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_FRAME_GENERATOR).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_DLSS_MFG).EnableWindow(neuralAvailable);
+	GetDlgItem(IDC_MFG_PRESENT_THREAD).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_NEURAL_INTENSITY).EnableWindow(neuralAvailable && m_neuralSettings.enabled);
 
 	if (!IsWindows8OrGreater()) { // Windows 7
@@ -401,6 +403,11 @@ INT_PTR CVRMainPPage::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 		int action = HIWORD(wParam);
 
 		if (action == BN_CLICKED) {
+			if (nID == IDC_MFG_PRESENT_THREAD) {
+				m_neuralSettings.presentThread = IsDlgButtonChecked(IDC_MFG_PRESENT_THREAD) == BST_CHECKED;
+				SetDirty();
+				return (LRESULT)1;
+			}
 			if (nID == IDC_NEURAL_ENABLED) {
 				m_neuralSettings.enabled = IsDlgButtonChecked(IDC_NEURAL_ENABLED) == BST_CHECKED;
 				EnableControls();
