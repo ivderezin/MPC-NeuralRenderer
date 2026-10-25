@@ -79,7 +79,7 @@ int main() {
         Require(queue.NextDeadline()==3999,"queued batch starts one step after the previous real frame");
         frame = queue.TakeDue(3999);
         Require(frame && frame->batch==2 && frame->texture==0,"queued batch follows the previous real frame");
-        unsigned skipped = 0;
+        skipped = 0;
         frame = queue.TakeDue(100000,&skipped);
         Require(frame && frame->batch==2 && frame->real && skipped==1 && !queue.Pending(),"late wakeup shows the latest due frame");
 
