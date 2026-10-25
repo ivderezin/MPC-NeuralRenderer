@@ -27,6 +27,9 @@
 #include <map>
 #include "IVideoRenderer.h"
 #include "NeuralRendering/NeuralPass.h"
+#include "FrameGeneration/FramePlan.h"
+#include "FrameGeneration/PresentationTimer.h"
+#include "FrameGeneration/XessPresenter.h"
 #include "DX11Helper.h"
 #include "D3D11VP.h"
 #include "D3DUtil/D3D11Font.h"
@@ -45,6 +48,19 @@ class CDX11VideoProcessor
 {
 private:
 	neural::NeuralPass m_neuralPass;
+	neural::Settings m_processingSettings;
+	framegen::XessPresenter m_xessPresenter;
+	HRESULT GetDrawingBuffer(ID3D11Texture2D** texture);
+	HRESULT PresentFrame(unsigned syncInterval, bool running);
+	SIZE m_neuralMonitorSize{};
+	double m_neuralRefreshHz = 60;
+	framegen::FramePlan m_mfgPlan;
+	framegen::PresentationTimer m_mfgTimer;
+	unsigned long long m_mfgSerial = 0;
+	bool m_mfgActive = false;
+	int m_pipelineRotation = 0;
+	CDrawStats m_mfgDrawStats;
+	void StopMfgPresentation();
 	REFERENCE_TIME m_neuralFrameTimestamp = 0;
 	Tex2D_t m_TexNeural; // view of the latest completed NR frame, owned by m_neuralPass
 	bool NeuralSourceSupported() { return !SourceIsHDR() && !m_bVPUseRTXVideoHDR && !m_pPSHalfOUtoInterlace; }
@@ -356,6 +372,7 @@ public:
 	HRESULT CopySample(IMediaSample* pSample);
 	// Render: 1 - render first fied or progressive frame, 2 - render second fied, 0 or other - forced repeat of render.
 	HRESULT Render(int field, const REFERENCE_TIME frameStartTime) override;
+	void PresentGeneratedFrames() override;
 	HRESULT FillBlack() override;
 
 	void SetVideoRect(const CRect& videoRect)      override;
@@ -396,6 +413,7 @@ private:
 	HRESULT D3D11VPPass(ID3D11Texture2D* pRenderTarget, const CRect& srcRect, const CRect& dstRect, const bool second);
 	HRESULT ConvertColorPass(ID3D11Texture2D* pRenderTarget);
 	HRESULT ResizeShaderPass(const Tex2D_t& Tex, ID3D11Texture2D* pRenderTarget, const CRect& srcRect, const CRect& dstRect, const int rotation);
+	HRESULT DrawProcessedTexture(Tex2D_t& input, ID3D11Texture2D* target, CRect srcRect, CRect dstRect, int rotation);
 	HRESULT FinalPass(const Tex2D_t& Tex, ID3D11Texture2D* pRenderTarget, const CRect& srcRect, const CRect& dstRect);
 
 	void DrawSubtitles(ID3D11Texture2D* pRenderTarget);

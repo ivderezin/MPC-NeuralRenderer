@@ -6,9 +6,12 @@ if (!$msbuild) { throw 'Visual Studio 2022 with C++, MFC and ATL is required.' }
 if (!(Test-Path (Join-Path $root 'deps/ngx/lib/nvsdk_ngx_s.lib')) -or !(Test-Path (Join-Path $root 'deps/ngx/include/nvsdk_ngx.h'))) {
     & (Join-Path $PSScriptRoot 'Fetch-NgxSdk.ps1')
 }
+& (Join-Path $PSScriptRoot 'Fetch-VendorSdks.ps1')
 & $msbuild (Join-Path $root 'MpcVideoRenderer.sln') /m /nologo /p:Configuration=Release /p:Platform=x64
 if ($LASTEXITCODE -ne 0) { throw 'Renderer build failed.' }
 $output = Join-Path $root '_bin/Filter_x64'
 Copy-Item (Join-Path $root 'README.md'), (Join-Path $root 'LICENSE.txt') $output
 Copy-Item (Join-Path $root 'distrib/Install_MPCVR_64.cmd'), (Join-Path $root 'distrib/Uninstall_MPCVR_64.cmd') $output
+Copy-Item (Join-Path $root 'deps/vendors/runtime/*.dll') $output
+Copy-Item (Join-Path $root 'deps/vendors/licenses/*') $output
 Write-Host "Renderer ready: $output"

@@ -53,6 +53,14 @@ public:
         LeaveCriticalSection(&m_CritSec);
     };
 #endif
+public:
+    BOOL TryLock() {
+        if (!TryEnterCriticalSection(&m_CritSec)) return FALSE;
+        // Reuse Lock's debug ownership accounting without waiting on another thread.
+        Lock();
+        LeaveCriticalSection(&m_CritSec);
+        return TRUE;
+    }
 };
 
 //

@@ -19,6 +19,7 @@
 */
 
 #include "stdafx.h"
+#include "Processing/RuntimeLibrary.h"
 #include <uuids.h>
 #include <Mferror.h>
 #include <Mfidl.h>
@@ -382,7 +383,8 @@ HRESULT CDX11VideoProcessor::TextureResizeShader(
 CDX11VideoProcessor::CDX11VideoProcessor(CMpcVideoRenderer* pFilter, const Settings_t& config, HRESULT& hr)
 	: CVideoProcessor(pFilter)
 {
-	m_neuralPass.Configure(neural::Settings::Load());
+	m_processingSettings = neural::Settings::Load();
+	m_neuralPass.Configure(m_processingSettings);
 	m_bShowStats           = config.bShowStats;
 	m_iResizeStats         = config.iResizeStats;
 	m_iTexFormat           = config.iTexFormat;
@@ -496,6 +498,9 @@ void CDX11VideoProcessor::FillDisplayParams()
 	MONITORINFOEXW mi = { sizeof(mi) };
 	GetMonitorInfoW(MonitorFromWindow(m_hWnd, MONITOR_DEFAULTTOPRIMARY), reinterpret_cast<LPMONITORINFO>(&mi));
 	DisplayConfig_t displayConfig = {};
+	m_neuralMonitorSize = {mi.rcMonitor.right-mi.rcMonitor.left,mi.rcMonitor.bottom-mi.rcMonitor.top};
+	m_neuralRefreshHz = GetRefreshRate(mi.szDevice);
+	if (m_neuralRefreshHz <= 0) m_neuralRefreshHz = 60;
 
 	if (GetDisplayConfig(mi.szDevice, displayConfig)) {
 		m_bHdrDisplayModeEnabled = displayConfig.HDREnabled();
@@ -671,6 +676,9 @@ bool CDX11VideoProcessor::Initialized()
 
 void CDX11VideoProcessor::ReleaseVP()
 {
+	StopMfgPresentation();
+	m_neuralPass.ClearHistory();
+	m_xessPresenter.ClearHistory();
 	DLog(L"CDX11VideoProcessor::ReleaseVP()");
 
 	m_pFilter->ResetStreamingTimes2();
@@ -700,6 +708,7 @@ void CDX11VideoProcessor::ReleaseVP()
 
 void CDX11VideoProcessor::ReleaseDevice()
 {
+	StopMfgPresentation();
 	m_TexNeural.Release();
 	m_neuralPass.ResetDevice();
 	DLog(L"CDX11VideoProcessor::ReleaseDevice()");
@@ -789,12 +798,14 @@ void CDX11VideoProcessor::ReleaseDevice()
 
 void CDX11VideoProcessor::ReleaseSwapChain()
 {
-	if (m_pDXGISwapChain1) {
+	StopMfgPresentation();
+	if (m_pDXGISwapChain1 && !m_xessPresenter.Active()) {
 		m_pDXGISwapChain1->SetFullscreenState(FALSE, nullptr);
 	}
 	m_pDXGIOutput.Release();
 	m_pDXGISwapChain4.Release();
 	m_pDXGISwapChain1.Release();
+	m_xessPresenter.Reset();
 
 	m_MaxDisplayLuminance = 0;
 }
@@ -1822,7 +1833,18 @@ HRESULT CDX11VideoProcessor::InitSwapChain(bool bWindowChanged)
 			L"CDX11VideoProcessor::InitSwapChain() : Invalid window size {}x{}, use {}x{}",
 			m_windowRect.Width(), m_windowRect.Height(), desc1.Width, desc1.Height);
 
-		hr = m_pDXGIFactory2->CreateSwapChainForHwnd(m_pDevice, m_hWnd, &desc1, nullptr, nullptr, &m_pDXGISwapChain1);
+		if (m_processingSettings.frameGenerator == processing::FrameGenerator::Xess && m_processingSettings.frameMultiplier > 1
+			&& !b10BitOutput && NeuralSourceSupported()) {
+			try {
+				hr = m_xessPresenter.Create(m_pDevice, m_pDeviceContext, m_pDXGIFactory2, m_hWnd, desc1,
+					m_processingSettings.frameMultiplier, m_neuralRefreshHz,
+					static_cast<float>(m_rtAvgTimePerFrame > 0 ? m_rtAvgTimePerFrame : 166667) / 10000.0f,
+					processing::ModuleDirectory(), &m_pDXGISwapChain1);
+				if (SUCCEEDED(hr)) desc1.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+			} catch (...) { hr = E_FAIL; }
+		}
+		if (!m_pDXGISwapChain1)
+			hr = m_pDXGIFactory2->CreateSwapChainForHwnd(m_pDevice, m_hWnd, &desc1, nullptr, nullptr, &m_pDXGISwapChain1);
 		DLogIf(FAILED(hr), L"CDX11VideoProcessor::InitSwapChain() : CreateSwapChainForHwnd() failed with error {}", HR2Str(hr));
 
 		m_lastFullscreenHMonitor = nullptr;
@@ -2962,7 +2984,7 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 	}
 
 	CComPtr<ID3D11Texture2D> pBackBuffer;
-	HRESULT hr = m_pDXGISwapChain1->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+	HRESULT hr = GetDrawingBuffer(&pBackBuffer);
 	if (FAILED(hr)) {
 		DLog(L"CDX11VideoProcessor::Render() : GetBuffer() failed with error {}", HR2Str(hr));
 		return hr;
@@ -3086,6 +3108,25 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 		hr = Process(pBackBuffer, m_srcRect, m_videoRect, m_FieldDrawn == 2);
 	}
 
+	const auto outputSerial = m_neuralPass.OutputSerial();
+	const auto generatedCount = m_neuralPass.GeneratedCount();
+	if (!m_xessPresenter.Active() && SUCCEEDED(hr) && field && generatedCount && m_pFilter->m_filterState == State_Running) {
+		if (outputSerial != m_mfgSerial) {
+			m_mfgPlan.Clear(); m_mfgSerial = outputSerial;
+			LARGE_INTEGER now{}, frequency{};
+			QueryPerformanceCounter(&now); QueryPerformanceFrequency(&frequency);
+			const auto duration = static_cast<long long>(static_cast<double>(m_neuralPass.OutputDuration()) * frequency.QuadPart / 10000000.0);
+			m_mfgPlan.Start(now.QuadPart,duration,generatedCount,m_neuralRefreshHz,static_cast<double>(frequency.QuadPart));
+			m_mfgActive = m_mfgPlan.Pending()
+				&& GetPropW(m_pFilter->m_hWndParentMain,L"MPCNeuralRenderer.This") == m_pFilter;
+			if (m_mfgActive) {
+				try { m_mfgTimer.Schedule(m_pFilter->m_hWndParentMain,m_mfgPlan.NextDeadline(),frequency.QuadPart); }
+				catch (...) { StopMfgPresentation(); }
+			}
+		}
+		if (m_mfgActive) return S_OK;
+	} else if (m_mfgActive) StopMfgPresentation();
+
 	if (!m_pPSHalfOUtoInterlace) {
 		DrawSubtitles(pBackBuffer);
 	}
@@ -3155,7 +3196,7 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 	}
 
 	g_bPresent = true;
-	hr = m_pDXGISwapChain1->Present(1, 0);
+	hr = PresentFrame(1, field && m_pFilter->m_filterState == State_Running);
 	g_bPresent = false;
 	DLogIf(FAILED(hr), L"CDX11VideoProcessor::Render() : Present() failed with error {}", HR2Str(hr));
 
@@ -3168,12 +3209,79 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 	return hr;
 }
 
+
+HRESULT CDX11VideoProcessor::GetDrawingBuffer(ID3D11Texture2D** texture)
+{
+	return m_xessPresenter.Active() ? m_xessPresenter.BackBuffer(texture)
+		: m_pDXGISwapChain1->GetBuffer(0, IID_PPV_ARGS(texture));
+}
+
+HRESULT CDX11VideoProcessor::PresentFrame(unsigned syncInterval, bool running)
+{
+	if (!m_xessPresenter.Active()) return m_pDXGISwapChain1->Present(syncInterval, 0);
+	const auto serial = m_neuralPass.OutputSerial();
+	const auto token = serial ? (serial << 1 | 1) : (static_cast<unsigned long long>(m_neuralFrameTimestamp) << 1);
+	const auto duration = serial ? m_neuralPass.OutputDuration() : m_rtAvgTimePerFrame;
+	return m_xessPresenter.Present(syncInterval, running, token,
+		static_cast<float>(duration > 0 ? duration : 166667) / 10000.0f);
+}
+
+void CDX11VideoProcessor::StopMfgPresentation()
+{
+	m_mfgTimer.Cancel(); m_mfgPlan.Clear(); m_mfgSerial = 0; m_mfgActive = false; m_mfgDrawStats.Reset();
+}
+
+void CDX11VideoProcessor::PresentGeneratedFrames()
+{
+	if (!m_mfgActive || !m_pDXGISwapChain1 || m_pFilter->m_filterState != State_Running
+		|| m_mfgSerial != m_neuralPass.OutputSerial()) {
+		StopMfgPresentation(); return;
+	}
+	LARGE_INTEGER now{}, frequency{};
+	QueryPerformanceCounter(&now); QueryPerformanceFrequency(&frequency);
+	const int index = m_mfgPlan.TakeDue(now.QuadPart);
+	if (index >= 0) {
+		auto* frame = m_neuralPass.PresentationFrame(static_cast<unsigned>(index));
+		if (!frame) { StopMfgPresentation(); return; }
+		Tex2D_t texture;
+		texture.pTexture = frame; frame->GetDesc(&texture.desc);
+		CComPtr<ID3D11Texture2D> backBuffer;
+		HRESULT hr = GetDrawingBuffer(&backBuffer);
+		if (SUCCEEDED(hr)) hr = m_pDevice->CreateShaderResourceView(frame,nullptr,&texture.pShaderResource);
+		if (FAILED(hr)) { StopMfgPresentation(); return; }
+		CComPtr<ID3D11RenderTargetView> target;
+		if (SUCCEEDED(m_pDevice->CreateRenderTargetView(backBuffer,nullptr,&target))) {
+			const float black[4] = {0,0,0,1}; m_pDeviceContext->ClearRenderTargetView(target,black);
+		}
+		hr = DrawProcessedTexture(texture,backBuffer,CRect(0,0,texture.desc.Width,texture.desc.Height),m_videoRect,m_pipelineRotation);
+		if (SUCCEEDED(hr)) DrawSubtitles(backBuffer);
+		if (SUCCEEDED(hr) && m_bShowStats) DrawStats(backBuffer);
+		if (SUCCEEDED(hr) && m_bAlphaBitmapEnable) {
+			D3D11_TEXTURE2D_DESC desc{}; backBuffer->GetDesc(&desc);
+			D3D11_VIEWPORT viewport{m_AlphaBitmapNRectDest.left*desc.Width,m_AlphaBitmapNRectDest.top*desc.Height,
+				(m_AlphaBitmapNRectDest.right-m_AlphaBitmapNRectDest.left)*desc.Width,
+				(m_AlphaBitmapNRectDest.bottom-m_AlphaBitmapNRectDest.top)*desc.Height,0,1};
+			AlphaBlt(m_TexAlphaBitmap.pShaderResource,backBuffer,m_pAlphaBitmapVertex,&viewport,m_pSamplerLinear);
+		}
+		if (SUCCEEDED(hr)) {
+			g_bPresent = true; hr = PresentFrame(0, false); g_bPresent = false;
+			if (SUCCEEDED(hr)) m_mfgDrawStats.Add(GetPreciseTick());
+		}
+		if (FAILED(hr)) { StopMfgPresentation(); return; }
+	}
+	if (m_mfgPlan.Pending()) {
+		try { m_mfgTimer.Schedule(m_pFilter->m_hWndParentMain,m_mfgPlan.NextDeadline(),frequency.QuadPart); }
+		catch (...) { StopMfgPresentation(); }
+	}
+}
+
 HRESULT CDX11VideoProcessor::FillBlack()
 {
+	StopMfgPresentation();
 	CheckPointer(m_pDXGISwapChain1, E_ABORT);
 
 	CComPtr<ID3D11Texture2D> pBackBuffer;
-	HRESULT hr = m_pDXGISwapChain1->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+	HRESULT hr = GetDrawingBuffer(&pBackBuffer);
 	if (FAILED(hr)) {
 		DLog(L"CDX11VideoProcessor::FillBlack() : GetBuffer() failed with error {}", HR2Str(hr));
 		return hr;
@@ -3211,7 +3319,7 @@ HRESULT CDX11VideoProcessor::FillBlack()
 	}
 
 	g_bPresent = true;
-	hr = m_pDXGISwapChain1->Present(1, 0);
+	hr = PresentFrame(1, false);
 	g_bPresent = false;
 	DLogIf(FAILED(hr), L"CDX11VideoProcessor::FillBlack() : Present() failed with error {}", HR2Str(hr));
 
@@ -3232,7 +3340,8 @@ void CDX11VideoProcessor::UpdateTexures()
 	HRESULT hr = S_OK;
 
 	if (m_D3D11VP.IsReady()) {
-		if (m_bVPScaling && !NeuralActive()) {
+		if (m_bVPScaling && !NeuralActive() && m_videoRect.Width() <= static_cast<int>(m_srcRectWidth)
+			&& m_videoRect.Height() <= static_cast<int>(m_srcRectHeight)) {
 			CSize texsize = m_videoRect.Size();
 			hr = m_TexConvertOutput.CheckCreate(m_pDevice, m_D3D11OutputFmt, texsize.cx, texsize.cy, Tex2D_DefaultShaderRTarget);
 			if (FAILED(hr)) {
@@ -3661,7 +3770,8 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 				(m_TexConvertOutput.desc.Width != dstRect.Width() || m_TexConvertOutput.desc.Height != dstRect.Height() || m_bFlip
 				|| dstRect.right > m_windowRect.right || dstRect.bottom > m_windowRect.bottom)
 				|| (m_bHdrPassthroughSupport && (m_bHdrPassthrough || m_bHdrLocalToneMapping)); // At least on Nvidia we can sometimes get the "D3D11: Removing Device" error here when HDR Passthrough.
-			if (!bNeedShaderTransform && !numSteps && !bNeural) {
+			if (!bNeedShaderTransform && !numSteps && !bNeural
+				&& dstRect.Width() <= srcRect.Width() && dstRect.Height() <= srcRect.Height()) {
 				m_bVPScalingUseShaders = false;
 				hr = D3D11VPPass(pRenderTarget, rSrc, dstRect, second);
 
@@ -3685,7 +3795,9 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 	}
 
 	if (bNeural) {
-		if (auto* texture = m_neuralPass.Process(m_pDevice, m_pDeviceContext, pInputTexture->pTexture, rSrc, m_neuralFrameTimestamp, true)) {
+		if (auto* texture = m_neuralPass.Process(m_pDevice, m_pDeviceContext, pInputTexture->pTexture, rSrc, m_neuralFrameTimestamp, true,
+			dstRect.Size(), m_neuralMonitorSize, m_neuralRefreshHz,
+			static_cast<float>(m_rtAvgTimePerFrame > 0 ? m_rtAvgTimePerFrame : 166667) / 10000.0f)) {
 			if (m_TexNeural.pTexture != texture) {
 				m_TexNeural.Release();
 				if (SUCCEEDED(m_pDevice->CreateShaderResourceView(texture, nullptr, &m_TexNeural.pShaderResource))) {
@@ -3698,6 +3810,23 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 				rSrc.SetRect(0, 0, m_TexNeural.desc.Width, m_TexNeural.desc.Height);
 			}
 		}
+	}
+
+	m_pipelineRotation = rotation;
+	return DrawProcessedTexture(*pInputTexture,pRenderTarget,rSrc,dstRect,rotation);
+}
+
+HRESULT CDX11VideoProcessor::DrawProcessedTexture(Tex2D_t& input, ID3D11Texture2D* pRenderTarget, CRect rSrc, CRect dstRect, int rotation)
+{
+	HRESULT hr = S_OK;
+	Tex2D_t* pInputTexture = &input;
+	const auto numSteps = GetPostScaleSteps();
+	// Keep native pixels centered until the selected upscaler produces a result.
+	if (dstRect.Width() > rSrc.Width() || dstRect.Height() > rSrc.Height()) {
+		const double scale = std::min({1.0, static_cast<double>(dstRect.Width())/rSrc.Width(), static_cast<double>(dstRect.Height())/rSrc.Height()});
+		const int width = static_cast<int>(rSrc.Width()*scale), height = static_cast<int>(rSrc.Height()*scale);
+		const int left = dstRect.left + (dstRect.Width()-width)/2, top = dstRect.top + (dstRect.Height()-height)/2;
+		dstRect.SetRect(left,top,left+width,top+height);
 	}
 
 	if (numSteps) {
@@ -3824,6 +3953,7 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 
 void CDX11VideoProcessor::SetVideoRect(const CRect& videoRect)
 {
+	StopMfgPresentation();
 	m_videoRect = videoRect;
 	UpdateRenderRect();
 	UpdateTexures();
@@ -3839,7 +3969,8 @@ HRESULT CDX11VideoProcessor::SetWindowRect(const CRect& windowRect)
 	const UINT h = m_windowRect.Height();
 
 	if (m_pDXGISwapChain1 && !m_bExclusiveScreen) {
-		hr = m_pDXGISwapChain1->ResizeBuffers(0, w, h, DXGI_FORMAT_UNKNOWN, 0);
+		hr = m_xessPresenter.Active() ? m_xessPresenter.Resize(w,h)
+			: m_pDXGISwapChain1->ResizeBuffers(0, w, h, DXGI_FORMAT_UNKNOWN, 0);
 	}
 
 	UpdateStatsByWindow();
@@ -4013,7 +4144,7 @@ HRESULT CDX11VideoProcessor::GetDisplayedImage(BYTE **ppDib, unsigned* pSize)
 	}
 
 	CComPtr<ID3D11Texture2D> pBackBuffer;
-	HRESULT hr = m_pDXGISwapChain1->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+	HRESULT hr = GetDrawingBuffer(&pBackBuffer);
 	if (FAILED(hr)) {
 		DLog(L"CDX11VideoProcessor::GetDisplayedImage() failed with error {}", HR2Str(hr));
 		return hr;
@@ -4198,11 +4329,19 @@ HRESULT CDX11VideoProcessor::GetVPInfo(std::wstring& str)
 
 void CDX11VideoProcessor::Configure(const Settings_t& config)
 {
+	StopMfgPresentation();
 	const bool neuralWasEnabled = m_neuralPass.Enabled();
-	m_neuralPass.Configure(neural::Settings::Load());
+	const auto previousProcessing = m_processingSettings;
+	m_processingSettings = neural::Settings::Load();
+	const bool changePresenter = (previousProcessing.frameGenerator == processing::FrameGenerator::Xess
+		|| m_processingSettings.frameGenerator == processing::FrameGenerator::Xess)
+		&& (previousProcessing.frameGenerator != m_processingSettings.frameGenerator
+			|| previousProcessing.frameMultiplier != m_processingSettings.frameMultiplier);
+	m_neuralPass.Configure(m_processingSettings);
 	m_neuralPass.ClearHistory();
+	m_xessPresenter.ClearHistory();
 	const bool changeNeural = neuralWasEnabled != m_neuralPass.Enabled();
-	bool changeWindow            = false;
+	bool changeWindow            = changePresenter;
 	bool changeDevice            = false;
 	bool changeVP                = false;
 	bool changeHDR               = false;
@@ -4496,7 +4635,9 @@ void CDX11VideoProcessor::SetStereo3dTransform(int value)
 
 void CDX11VideoProcessor::Flush()
 {
+	StopMfgPresentation();
 	m_neuralPass.ClearHistory();
+	m_xessPresenter.ClearHistory();
 	if (m_D3D11VP.IsReady()) {
 		m_D3D11VP.ResetFrameOrder();
 	}
@@ -4807,7 +4948,12 @@ HRESULT CDX11VideoProcessor::DrawStats(ID3D11Texture2D* pRenderTarget)
 	std::wstring str;
 	str.reserve(700);
 	str.assign(m_strStatsHeader);
-	str.append(L"\nNeural rendering: " + m_neuralPass.Status());
+	str.append(L"\n" + m_neuralPass.Status());
+	if (m_processingSettings.frameGenerator == processing::FrameGenerator::Xess && m_processingSettings.frameMultiplier > 1) {
+		str += L"\n" + (m_xessPresenter.Status().empty()
+			? std::wstring(L"XeSS FG: requires windowed SDR / 8-bit output") : m_xessPresenter.Status());
+	}
+	if (m_mfgActive) str += std::format(L"\nMFG presentation: {:.1f} fps",m_mfgDrawStats.GetAverageFps());
 	str.append(m_strStatsDispInfo);
 	str += std::format(L"\nGraph. Adapter: {}", m_strAdapterDescription);
 

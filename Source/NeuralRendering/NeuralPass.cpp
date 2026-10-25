@@ -4,6 +4,9 @@
 #include "FrameHistory.h"
 #include "AsyncOutput.h"
 #include "MotionShaders.h"
+#include "../Upscaling/UpscaleStage.h"
+#include "../FrameGeneration/GenerationStage.h"
+#include "../FrameGeneration/GenerationPolicy.h"
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <d3dcompiler.h>
@@ -14,9 +17,11 @@
 #include <atomic>
 #include <filesystem>
 #include <iomanip>
+#include <cmath>
 #include <sstream>
 #include <stdexcept>
 #include <nvsdk_ngx.h>
+#include "../Ngx/Feature.h"
 
 #pragma comment(lib, "nvsdk_ngx_s.lib")
 
@@ -43,32 +48,46 @@ void CheckNgx(NVSDK_NGX_Result result, const char* operation) {
 }
 struct Handle {
     HANDLE value = nullptr;
-    ~Handle() { if (value) CloseHandle(value); }
+    ~Handle() {
+        if (value)
+            CloseHandle(value);
+    }
     Handle() = default;
     Handle(const Handle&) = delete;
     Handle& operator=(const Handle&) = delete;
 };
 struct Module {
     HMODULE value = nullptr;
-    ~Module() { if (value) FreeLibrary(value); }
+    ~Module() {
+        if (value)
+            FreeLibrary(value);
+    }
 };
 std::filesystem::path ModuleDirectory() {
     HMODULE self = nullptr;
     Check(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        reinterpret_cast<LPCWSTR>(&ModuleDirectory), &self) ? S_OK : HRESULT_FROM_WIN32(GetLastError()), "Locate renderer");
+                             reinterpret_cast<LPCWSTR>(&ModuleDirectory), &self)
+              ? S_OK
+              : HRESULT_FROM_WIN32(GetLastError()),
+          "Locate renderer");
     std::array<wchar_t, 32768> path{};
     auto length = GetModuleFileNameW(self, path.data(), static_cast<DWORD>(path.size()));
-    if (!length || length >= path.size()) throw std::runtime_error("Renderer path too long");
+    if (!length || length >= path.size())
+        throw std::runtime_error("Renderer path too long");
     return std::filesystem::path(path.data()).parent_path();
 }
-template<class T> T Export(HMODULE module, const char* name) {
+template <class T> T Export(HMODULE module, const char* name) {
     auto address = GetProcAddress(module, name);
-    if (!address) throw std::runtime_error(std::string("Missing export: ") + name);
+    if (!address)
+        throw std::runtime_error(std::string("Missing export: ") + name);
     return reinterpret_cast<T>(address);
 }
-using InitFn = NVSDK_NGX_Result(__cdecl*)(unsigned long long, const wchar_t*, ID3D12Device*, NVSDK_NGX_Version, const NVSDK_NGX_Parameter*);
-using CreateFn = NVSDK_NGX_Result(__cdecl*)(ID3D12GraphicsCommandList*, NVSDK_NGX_Feature, NVSDK_NGX_Parameter*, NVSDK_NGX_Handle**);
-using EvaluateFn = NVSDK_NGX_Result(__cdecl*)(ID3D12GraphicsCommandList*, const NVSDK_NGX_Handle*, const NVSDK_NGX_Parameter*, void*);
+using InitFn = NVSDK_NGX_Result(__cdecl*)(unsigned long long, const wchar_t*, ID3D12Device*, NVSDK_NGX_Version,
+                                          const NVSDK_NGX_Parameter*);
+using CreateFn = NVSDK_NGX_Result(__cdecl*)(ID3D12GraphicsCommandList*, NVSDK_NGX_Feature, NVSDK_NGX_Parameter*,
+                                            NVSDK_NGX_Handle**);
+using EvaluateFn = NVSDK_NGX_Result(__cdecl*)(ID3D12GraphicsCommandList*, const NVSDK_NGX_Handle*,
+                                              const NVSDK_NGX_Parameter*, void*);
 using ReleaseFn = NVSDK_NGX_Result(__cdecl*)(NVSDK_NGX_Handle*);
 using ShutdownFn = NVSDK_NGX_Result(__cdecl*)(ID3D12Device*);
 
@@ -79,25 +98,33 @@ NVSDK_NGX_Result CallInit(InitFn fn, const wchar_t* path, ID3D12Device* device) 
 #endif
         return fn(0x0876232Cull, path, device, NVSDK_NGX_Version_API, nullptr);
 #ifdef _MSC_VER
-    } __except(EXCEPTION_EXECUTE_HANDLER) { return NVSDK_NGX_Result_Fail; }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return NVSDK_NGX_Result_Fail;
+    }
 #endif
 }
-NVSDK_NGX_Result CallCreate(CreateFn fn, ID3D12GraphicsCommandList* list, NVSDK_NGX_Parameter* params, NVSDK_NGX_Handle** feature) {
+NVSDK_NGX_Result CallCreate(CreateFn fn, ID3D12GraphicsCommandList* list, NVSDK_NGX_Parameter* params,
+                            NVSDK_NGX_Handle** feature) {
 #ifdef _MSC_VER
     __try {
 #endif
         return fn(list, static_cast<NVSDK_NGX_Feature>(18), params, feature);
 #ifdef _MSC_VER
-    } __except(EXCEPTION_EXECUTE_HANDLER) { return NVSDK_NGX_Result_Fail; }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return NVSDK_NGX_Result_Fail;
+    }
 #endif
 }
-NVSDK_NGX_Result CallEvaluate(EvaluateFn fn, ID3D12GraphicsCommandList* list, NVSDK_NGX_Handle* feature, NVSDK_NGX_Parameter* params) {
+NVSDK_NGX_Result CallEvaluate(EvaluateFn fn, ID3D12GraphicsCommandList* list, NVSDK_NGX_Handle* feature,
+                              NVSDK_NGX_Parameter* params) {
 #ifdef _MSC_VER
     __try {
 #endif
         return fn(list, feature, params, nullptr);
 #ifdef _MSC_VER
-    } __except(EXCEPTION_EXECUTE_HANDLER) { return NVSDK_NGX_Result_Fail; }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return NVSDK_NGX_Result_Fail;
+    }
 #endif
 }
 void CallRelease(ReleaseFn fn, NVSDK_NGX_Handle* feature) {
@@ -106,7 +133,8 @@ void CallRelease(ReleaseFn fn, NVSDK_NGX_Handle* feature) {
 #endif
         fn(feature);
 #ifdef _MSC_VER
-    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
 #endif
 }
 void CallShutdown(ShutdownFn fn, ID3D12Device* device) {
@@ -115,7 +143,8 @@ void CallShutdown(ShutdownFn fn, ID3D12Device* device) {
 #endif
         fn(device);
 #ifdef _MSC_VER
-    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
 #endif
 }
 struct SharedTexture {
@@ -125,9 +154,11 @@ struct SharedTexture {
     ComPtr<ID3D12Resource> resource;
     void Create(ID3D11Device* device11, ID3D12Device* device12, UINT width, UINT height, DXGI_FORMAT format) {
         D3D11_TEXTURE2D_DESC desc{};
-        desc.Width = width; desc.Height = height;
+        desc.Width = width;
+        desc.Height = height;
         desc.MipLevels = desc.ArraySize = 1;
-        desc.Format = format; desc.SampleDesc.Count = 1;
+        desc.Format = format;
+        desc.SampleDesc.Count = 1;
         desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
         desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
         Check(device11->CreateTexture2D(&desc, nullptr, &texture), "Create shared texture");
@@ -136,18 +167,22 @@ struct SharedTexture {
         ComPtr<IDXGIResource1> dxgi;
         Check(texture.As(&dxgi), "Query shared texture");
         Handle handle;
-        Check(dxgi->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr, &handle.value), "Share texture");
+        Check(dxgi->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr,
+                                       &handle.value),
+              "Share texture");
         Check(device12->OpenSharedHandle(handle.value, IID_PPV_ARGS(&resource)), "Open D3D12 texture");
     }
 };
 ComPtr<ID3D11ComputeShader> Compile(ID3D11Device* device, const char* source) {
     ComPtr<ID3DBlob> code, errors;
     auto result = D3DCompile(source, strlen(source), "MPC-NeuralRenderer", nullptr, nullptr, "main", "cs_5_0",
-        D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
-    if (FAILED(result) && errors) throw std::runtime_error(static_cast<const char*>(errors->GetBufferPointer()));
+                             D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
+    if (FAILED(result) && errors)
+        throw std::runtime_error(static_cast<const char*>(errors->GetBufferPointer()));
     Check(result, "Compile compute shader");
     ComPtr<ID3D11ComputeShader> shader;
-    Check(device->CreateComputeShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, &shader), "Create compute shader");
+    Check(device->CreateComputeShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, &shader),
+          "Create compute shader");
     return shader;
 }
 void Subrect(NVSDK_NGX_Parameter* params, const char* name, UINT width, UINT height) {
@@ -191,6 +226,24 @@ struct NeuralPass::Impl {
     ComPtr<ID3D11Buffer> constants;
     SharedTexture color, output, vectors, depth;
     FrameHistory history;
+    Settings options;
+    upscaling::Extent target{}, monitor{};
+    double refreshHz = 60;
+    upscaling::UpscaleStage superResolution;
+    framegen::GenerationStage frameGeneration;
+    bool nrUsable = false, srUsable = false, fgUsable = false, fgNeedsReset = true, recreateFG = false;
+    bool fgLimitedByDisplay = false;
+    std::wstring nrFailure, srFailure, fgFailure;
+    SharedTexture scaled;
+    std::array<SharedTexture, 3> generated;
+    ComPtr<ID3D11Texture2D> displayScaled;
+    std::array<ComPtr<ID3D11Texture2D>, 3> displayGenerated;
+    ID3D11Texture2D* published = nullptr;
+    ID3D11Texture2D* pendingReal = nullptr;
+    bool pendingScaled = false, pendingHasFG = false;
+    unsigned generatedCount = 0;
+    unsigned long long serial = 0;
+    long long lastInputTimestamp = 0, pendingDuration = 0, outputDuration = 0;
     Module snippet;
     NVSDK_NGX_Parameter* params = nullptr;
     NVSDK_NGX_Handle* feature = nullptr;
@@ -200,18 +253,29 @@ struct NeuralPass::Impl {
     ShutdownFn shutdown = nullptr;
 
     void WaitForSubmission() {
-        if (!submitted || fence12->GetCompletedValue() >= submitted) return;
+        if (!submitted || fence12->GetCompletedValue() >= submitted)
+            return;
         Check(fence12->SetEventOnCompletion(submitted, fenceEvent.value), "Fence completion event");
         if (WaitForSingleObject(fenceEvent.value, INFINITE) != WAIT_OBJECT_0)
             throw std::runtime_error("GPU fence wait failed");
     }
     ~Impl() {
-        try { WaitForSubmission(); } catch (...) {}
-        if (feature && release) CallRelease(release, feature);
-        if (params) NVSDK_NGX_D3D12_DestroyParameters(params);
-        if (snippetInitialized && shutdown) CallShutdown(shutdown, device12.Get());
-        if (coreInitialized) NVSDK_NGX_D3D12_Shutdown1(device12.Get());
-        if (lease) SessionActive.clear();
+        try {
+            WaitForSubmission();
+        } catch (...) {
+        }
+        superResolution.Reset();
+        frameGeneration.Reset();
+        if (feature && release)
+            CallRelease(release, feature);
+        if (params)
+            NVSDK_NGX_D3D12_DestroyParameters(params);
+        if (snippetInitialized && shutdown)
+            CallShutdown(shutdown, device12.Get());
+        if (coreInitialized)
+            NVSDK_NGX_D3D12_Shutdown1(device12.Get());
+        if (lease)
+            SessionActive.clear();
     }
     UINT64 Completed() const {
         const auto completed = fence12->GetCompletedValue();
@@ -226,41 +290,70 @@ struct NeuralPass::Impl {
         asyncOutput.Invalidate();
         lastCompletion = {};
         completedFps = 0;
+        generatedCount = 0;
+        published = nullptr;
+        fgNeedsReset = true;
     }
     void ReadTiming() {
         const D3D12_RANGE readRange{0, sizeof(UINT64) * 2};
         void* data = nullptr;
         Check(timingReadback->Map(0, &readRange, &data), "Read NR timing");
         const auto* timestamps = static_cast<const UINT64*>(data);
-        gpuMilliseconds = 1000.0 * static_cast<double>(timestamps[1] - timestamps[0]) / static_cast<double>(timingFrequency);
+        gpuMilliseconds =
+            1000.0 * static_cast<double>(timestamps[1] - timestamps[0]) / static_cast<double>(timingFrequency);
         const D3D12_RANGE writtenRange{0, 0};
         timingReadback->Unmap(0, &writtenRange);
         D3D11_QUERY_DATA_TIMESTAMP_DISJOINT clock{};
         UINT64 start = 0, end = 0;
-        if (context11->GetData(preparationClock.Get(), &clock, sizeof(clock), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK
-            && !clock.Disjoint && clock.Frequency
-            && context11->GetData(preparationStart.Get(), &start, sizeof(start), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK
-            && context11->GetData(preparationEnd.Get(), &end, sizeof(end), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK)
+        if (context11->GetData(preparationClock.Get(), &clock, sizeof(clock), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
+            !clock.Disjoint && clock.Frequency &&
+            context11->GetData(preparationStart.Get(), &start, sizeof(start), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
+            context11->GetData(preparationEnd.Get(), &end, sizeof(end), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK)
             preparationMilliseconds = 1000.0 * static_cast<double>(end - start) / static_cast<double>(clock.Frequency);
         LARGE_INTEGER now{};
         QueryPerformanceCounter(&now);
         if (lastCompletion.QuadPart && now.QuadPart > lastCompletion.QuadPart) {
-            const double fps = static_cast<double>(counterFrequency.QuadPart) / static_cast<double>(now.QuadPart - lastCompletion.QuadPart);
+            const double fps = static_cast<double>(counterFrequency.QuadPart) /
+                               static_cast<double>(now.QuadPart - lastCompletion.QuadPart);
             completedFps = completedFps ? completedFps * 0.8 + fps * 0.2 : fps;
         }
         lastCompletion = now;
     }
     std::wstring Status() const {
         std::wostringstream message;
-        message << (asyncOutput.Available() ? L"Active " : L"Starting ") << width << L"x" << height;
+        if (options.enabled) {
+            if (!nrUsable)
+                message << L"NR: " << nrFailure;
+            else
+                message << L"NR: " << (asyncOutput.Available() ? L"Active " : L"Starting ") << width << L"x" << height;
+        } else
+            message << L"NR: Off";
+        message << L"\n" << processing::Name(options.upscaler) << L" upscaling: ";
+        if (srUsable)
+            message << width << L"x" << height << L" -> " << target.width << L"x" << target.height;
+        else if (!srFailure.empty())
+            message << srFailure;
+        else
+            message << ((options.upscaler != processing::Upscaler::Off) ? L"not needed (native size / downscale)"
+                                                                        : L"Off");
+        if (options.frameGenerator != processing::FrameGenerator::Xess) {
+            message << L"\n" << processing::Name(options.frameGenerator) << L": ";
+            if (fgUsable && fgLimitedByDisplay)
+                message << L"bypass (display refresh limit)";
+            else if (fgUsable)
+                message << L"up to " << (std::min)(options.frameMultiplier, frameGeneration.MaxGenerated() + 1)
+                        << L"x, latest batch " << generatedCount << L" generated";
+            else
+                message << (options.ManualGeneration() ? fgFailure : L"Off");
+        }
         if (asyncOutput.Available())
-            message << std::fixed << std::setprecision(1) << L", NR " << completedFps << L" fps"
-                << L"\nNR GPU: " << gpuMilliseconds << L" ms, preparation: " << preparationMilliseconds << L" ms";
-        message << L" (async)";
+            message << std::fixed << std::setprecision(1) << L"\nProcessing: " << completedFps << L" fps, GPU "
+                    << gpuMilliseconds << L" ms, prepare " << preparationMilliseconds << L" ms (async)";
         return message.str();
     }
     void Begin() {
-        if (asyncOutput.Busy(Completed())) throw std::logic_error("NR allocator is still in use");
+        if (asyncOutput.Busy(Completed()))
+            throw std::logic_error("NR allocator is still in use");
         Check(allocator->Reset(), "Reset command allocator");
         Check(list->Reset(allocator.Get(), nullptr), "Reset command list");
     }
@@ -273,8 +366,15 @@ struct NeuralPass::Impl {
         submitted = signal;
         asyncOutput.Submit(signal, producesOutput);
     }
-    void Initialize(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture2D* frame, RECT videoRect) {
-        if (SessionActive.test_and_set()) throw std::runtime_error("Another neural renderer is active in this process");
+    void Initialize(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture2D* frame, RECT videoRect,
+                    Settings settings, upscaling::Extent targetSize, upscaling::Extent monitorSize,
+                    double displayRefresh) {
+        options = settings;
+        target = targetSize;
+        monitor = monitorSize;
+        refreshHz = displayRefresh;
+        if (SessionActive.test_and_set())
+            throw std::runtime_error("Another neural renderer is active in this process");
         lease = true;
         device11 = device;
         Check(context->QueryInterface(IID_PPV_ARGS(&context11)), "D3D11.4 context required");
@@ -284,14 +384,16 @@ struct NeuralPass::Impl {
         Check(dxgi->GetAdapter(&adapter), "Get GPU adapter");
         DXGI_ADAPTER_DESC adapterDesc{};
         Check(adapter->GetDesc(&adapterDesc), "Get GPU description");
-        if (adapterDesc.VendorId != 0x10de) throw std::runtime_error("NVIDIA GPU required");
+
         Check(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device12)), "Create D3D12 device");
         D3D12_COMMAND_QUEUE_DESC queueDesc{};
         Check(device12->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&queue)), "Create command queue");
         Check(queue->GetTimestampFrequency(&timingFrequency), "Get NR timing frequency");
-        if (!timingFrequency || !QueryPerformanceFrequency(&counterFrequency)) throw std::runtime_error("NR timing unavailable");
+        if (!timingFrequency || !QueryPerformanceFrequency(&counterFrequency))
+            throw std::runtime_error("NR timing unavailable");
         D3D12_QUERY_HEAP_DESC queryDesc{};
-        queryDesc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP; queryDesc.Count = 2;
+        queryDesc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+        queryDesc.Count = 2;
         Check(device12->CreateQueryHeap(&queryDesc, IID_PPV_ARGS(&timingQueries)), "Create NR timing queries");
         D3D12_HEAP_PROPERTIES heap{};
         heap.Type = D3D12_HEAP_TYPE_READBACK;
@@ -303,13 +405,18 @@ struct NeuralPass::Impl {
         readbackDesc.SampleDesc.Count = 1;
         readbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         Check(device12->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &readbackDesc,
-            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&timingReadback)), "Create NR timing readback");
-        Check(device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)), "Create allocator");
-        Check(device12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&list)), "Create command list");
+                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&timingReadback)),
+              "Create NR timing readback");
+        Check(device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)),
+              "Create allocator");
+        Check(device12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr,
+                                          IID_PPV_ARGS(&list)),
+              "Create command list");
         Check(list->Close(), "Close initial list");
         Check(device12->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&fence12)), "Create shared fence");
         Handle fenceHandle;
-        Check(device12->CreateSharedHandle(fence12.Get(), nullptr, GENERIC_ALL, nullptr, &fenceHandle.value), "Share fence");
+        Check(device12->CreateSharedHandle(fence12.Get(), nullptr, GENERIC_ALL, nullptr, &fenceHandle.value),
+              "Share fence");
         ComPtr<ID3D11Device5> device5;
         Check(device->QueryInterface(IID_PPV_ARGS(&device5)), "D3D11.5 device required");
         Check(device5->OpenSharedFence(fenceHandle.value, IID_PPV_ARGS(&fence11)), "Open D3D11 fence");
@@ -317,7 +424,8 @@ struct NeuralPass::Impl {
         Check(fenceEvent.value ? S_OK : HRESULT_FROM_WIN32(GetLastError()), "Create fence event");
 
         rect = videoRect;
-        width = rect.right - rect.left; height = rect.bottom - rect.top;
+        width = rect.right - rect.left;
+        height = rect.bottom - rect.top;
         D3D11_TEXTURE2D_DESC desc{};
         frame->GetDesc(&desc);
         sourceFormat = desc.Format;
@@ -331,7 +439,8 @@ struct NeuralPass::Impl {
         vectors.Create(device, device12.Get(), width, height, DXGI_FORMAT_R16G16_FLOAT);
         depth.Create(device, device12.Get(), width, height, DXGI_FORMAT_R32_FLOAT);
         color.texture->GetDesc(&desc);
-        desc.MiscFlags = 0; desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        desc.MiscFlags = 0;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
         Check(device->CreateTexture2D(&desc, nullptr, &previous), "Create previous frame");
         Check(device->CreateTexture2D(&desc, nullptr, &display), "Create completed NR frame");
         Check(device->CreateShaderResourceView(previous.Get(), nullptr, &previousView), "Create previous SRV");
@@ -344,56 +453,135 @@ struct NeuralPass::Impl {
         Check(device->CreateQuery(&preparationQuery, &preparationStart), "Create preparation start query");
         Check(device->CreateQuery(&preparationQuery, &preparationEnd), "Create preparation end query");
         D3D11_BUFFER_DESC buffer{};
-        buffer.ByteWidth = 32; buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        buffer.ByteWidth = 32;
+        buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         Check(device->CreateBuffer(&buffer, nullptr, &constants), "Create constants");
         const float zero[4]{};
         context11->ClearUnorderedAccessViewFloat(depth.uav.Get(), zero);
         context11->ClearUnorderedAccessViewFloat(vectors.uav.Get(), zero);
 
         auto directory = ModuleDirectory();
-        const auto model = directory / L"nvngx_dlssnr.dll";
-        snippet.value = LoadLibraryExW(model.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-        Check(snippet.value ? S_OK : HRESULT_FROM_WIN32(GetLastError()), "Load nvngx_dlssnr.dll beside renderer");
-        auto init = Export<InitFn>(snippet.value, "NVSDK_NGX_D3D12_Init_Ext");
-        create = Export<CreateFn>(snippet.value, "NVSDK_NGX_D3D12_CreateFeature");
-        evaluate = Export<EvaluateFn>(snippet.value, "NVSDK_NGX_D3D12_EvaluateFeature");
-        release = Export<ReleaseFn>(snippet.value, "NVSDK_NGX_D3D12_ReleaseFeature");
-        shutdown = Export<ShutdownFn>(snippet.value, "NVSDK_NGX_D3D12_Shutdown1");
-        std::array<wchar_t, MAX_PATH> temp{};
-        auto tempLength = GetTempPathW(static_cast<DWORD>(temp.size()), temp.data());
-        if (!tempLength || tempLength >= temp.size()) throw std::runtime_error("NGX cache path unavailable");
-        auto cache = std::filesystem::path(temp.data()) / L"MPC-NeuralRenderer";
-        std::filesystem::create_directories(cache);
+        std::wstring ngxFailure;
         const auto modelDir = directory.wstring();
-        const wchar_t* paths[] = {modelDir.c_str()};
-        NVSDK_NGX_FeatureCommonInfo info{};
-        info.PathListInfo.Path = paths; info.PathListInfo.Length = 1;
-        CheckNgx(NVSDK_NGX_D3D12_Init_with_ProjectID("80b3e1a9-7dab-4bb3-b64c-5d923d8cbf40", NVSDK_NGX_ENGINE_TYPE_CUSTOM,
-            "MPC-NeuralRenderer-0.1.0", cache.c_str(), device12.Get(), &info), "Initialize driver NGX");
-        coreInitialized = true;
-        CheckNgx(NVSDK_NGX_D3D12_AllocateParameters(&params), "Allocate NGX parameters");
-        CheckNgx(CallInit(init, modelDir.c_str(), device12.Get()), "Initialize NR model");
-        snippetInitialized = true;
-        for (const auto* key : {"DLSSNR.Width", "DLSSNR.InputWidth", "DLSSNR.OutputWidth", "DLSSNR.Output.Width", "Width", "OutWidth"}) params->Set(key, width);
-        for (const auto* key : {"DLSSNR.Height", "DLSSNR.InputHeight", "DLSSNR.OutputHeight", "DLSSNR.Output.Height", "Height", "OutHeight"}) params->Set(key, height);
-        params->Set("DLSSNR.Upscaling", 0u);
-        params->Set("DLSSNR.Scale", 1.0f);
-        params->Set("DLSSNR.ScalingRatio", 1.0f);
-        params->Set("DLSSNRComputeScalingRatioCallback", reinterpret_cast<void*>(&ScalingRatio));
-        params->Set("DLSSNR.Hint.Render.Preset", 0u);
-        params->Set(NVSDK_NGX_Parameter_PerfQualityValue, static_cast<int>(NVSDK_NGX_PerfQuality_Value_Balanced));
-        params->Set(NVSDK_NGX_Parameter_CreationNodeMask, 1u);
-        params->Set(NVSDK_NGX_Parameter_VisibilityNodeMask, 1u);
+        if (options.enabled || options.upscaler == processing::Upscaler::Dlss ||
+            (options.ManualGeneration() && options.frameGenerator == processing::FrameGenerator::Dlss)) {
+            try {
+                if (adapterDesc.VendorId != 0x10de)
+                    throw std::runtime_error("NVIDIA GPU required for NR / DLSS");
+                std::array<wchar_t, MAX_PATH> temp{};
+                auto tempLength = GetTempPathW(static_cast<DWORD>(temp.size()), temp.data());
+                if (!tempLength || tempLength >= temp.size())
+                    throw std::runtime_error("NGX cache path unavailable");
+                auto cache = std::filesystem::path(temp.data()) / L"MPC-NeuralRenderer";
+                std::filesystem::create_directories(cache);
+                const wchar_t* paths[] = {modelDir.c_str()};
+                NVSDK_NGX_FeatureCommonInfo info{};
+                info.PathListInfo.Path = paths;
+                info.PathListInfo.Length = 1;
+                CheckNgx(NVSDK_NGX_D3D12_Init_with_ProjectID("80b3e1a9-7dab-4bb3-b64c-5d923d8cbf40",
+                                                             NVSDK_NGX_ENGINE_TYPE_CUSTOM, "MPC-NeuralRenderer-0.1.0",
+                                                             cache.c_str(), device12.Get(), &info),
+                         "Initialize driver NGX");
+                coreInitialized = true;
+            } catch (const std::exception& error) {
+                ngxFailure = ngx::Message(error);
+            }
+        }
         Begin();
-        CheckNgx(CallCreate(create, list.Get(), params, &feature), "Create NR feature");
-        if (!feature) throw std::runtime_error("NR returned no feature handle");
+        if (options.enabled) {
+            try {
+                if (!coreInitialized)
+                    throw std::runtime_error(std::string(ngxFailure.begin(), ngxFailure.end()));
+                CheckNgx(NVSDK_NGX_D3D12_AllocateParameters(&params), "Allocate NGX parameters");
+                const auto model = directory / L"nvngx_dlssnr.dll";
+                snippet.value = LoadLibraryExW(model.c_str(), nullptr,
+                                               LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+                Check(snippet.value ? S_OK : HRESULT_FROM_WIN32(GetLastError()),
+                      "Load nvngx_dlssnr.dll beside renderer");
+                auto init = Export<InitFn>(snippet.value, "NVSDK_NGX_D3D12_Init_Ext");
+                create = Export<CreateFn>(snippet.value, "NVSDK_NGX_D3D12_CreateFeature");
+                evaluate = Export<EvaluateFn>(snippet.value, "NVSDK_NGX_D3D12_EvaluateFeature");
+                release = Export<ReleaseFn>(snippet.value, "NVSDK_NGX_D3D12_ReleaseFeature");
+                shutdown = Export<ShutdownFn>(snippet.value, "NVSDK_NGX_D3D12_Shutdown1");
+                CheckNgx(CallInit(init, modelDir.c_str(), device12.Get()), "Initialize NR model");
+                snippetInitialized = true;
+                for (const auto* key : {"DLSSNR.Width", "DLSSNR.InputWidth", "DLSSNR.OutputWidth",
+                                        "DLSSNR.Output.Width", "Width", "OutWidth"})
+                    params->Set(key, width);
+                for (const auto* key : {"DLSSNR.Height", "DLSSNR.InputHeight", "DLSSNR.OutputHeight",
+                                        "DLSSNR.Output.Height", "Height", "OutHeight"})
+                    params->Set(key, height);
+                params->Set("DLSSNR.Upscaling", 0u);
+                params->Set("DLSSNR.Scale", 1.0f);
+                params->Set("DLSSNR.ScalingRatio", 1.0f);
+                params->Set("DLSSNRComputeScalingRatioCallback", reinterpret_cast<void*>(&ScalingRatio));
+                params->Set("DLSSNR.Hint.Render.Preset", 0u);
+                params->Set(NVSDK_NGX_Parameter_PerfQualityValue,
+                            static_cast<int>(NVSDK_NGX_PerfQuality_Value_Balanced));
+                params->Set(NVSDK_NGX_Parameter_CreationNodeMask, 1u);
+                params->Set(NVSDK_NGX_Parameter_VisibilityNodeMask, 1u);
+                CheckNgx(CallCreate(create, list.Get(), params, &feature), "Create NR feature");
+                if (!feature)
+                    throw std::runtime_error("NR returned no feature handle");
+                nrUsable = true;
+            } catch (const std::exception& error) {
+                nrFailure = ngx::Message(error);
+            }
+        }
+        if ((options.upscaler != processing::Upscaler::Off) &&
+            upscaling::ShouldUpscale({width, height}, target, monitor)) {
+            try {
+                scaled.Create(device, device12.Get(), target.width, target.height, DXGI_FORMAT_R8G8B8A8_UNORM);
+                D3D11_TEXTURE2D_DESC desc{};
+                scaled.texture->GetDesc(&desc);
+                desc.MiscFlags = 0;
+                desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                Check(device->CreateTexture2D(&desc, nullptr, &displayScaled), "Create upscaled display frame");
+                if (options.upscaler == processing::Upscaler::Dlss && !coreInitialized)
+                    throw std::runtime_error(std::string(ngxFailure.begin(), ngxFailure.end()));
+                superResolution.Create(options.upscaler, device12.Get(), list.Get(), {width, height}, target,
+                                       directory);
+                srUsable = true;
+            } catch (const std::exception& error) {
+                srFailure = ngx::Message(error);
+            }
+        }
+        if (options.ManualGeneration()) {
+            try {
+                CreateFrameGeneration();
+            } catch (const std::exception& error) {
+                fgFailure = ngx::Message(error);
+            }
+        }
         Submit(false);
     }
-    void Transition(bool begin) {
+    void CreateFrameGeneration() {
+        frameGeneration.Reset();
+        const auto outWidth = srUsable ? target.width : width;
+        const auto outHeight = srUsable ? target.height : height;
+        if (options.frameGenerator == processing::FrameGenerator::Dlss && !coreInitialized)
+            throw std::runtime_error("Driver NGX initialization failed");
+        frameGeneration.Create(options.frameGenerator, device12.Get(), list.Get(), width, height, outWidth, outHeight,
+                               ModuleDirectory());
+        for (unsigned i = 0; i < 3; ++i) {
+            generated[i].Create(device11.Get(), device12.Get(), outWidth, outHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
+            D3D11_TEXTURE2D_DESC desc{};
+            generated[i].texture->GetDesc(&desc);
+            desc.MiscFlags = 0;
+            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            Check(device11->CreateTexture2D(&desc, nullptr, &displayGenerated[i]), "Create MFG display frame");
+        }
+        fgUsable = true;
+        fgNeedsReset = true;
+        recreateFG = false;
+    }
+    void Transition(bool begin, bool outputRead = false) {
         std::array<D3D12_RESOURCE_BARRIER, 4> barriers{};
-        const std::array<ID3D12Resource*,4> resources = {color.resource.Get(), output.resource.Get(), vectors.resource.Get(), depth.resource.Get()};
-        for (size_t i=0; i<resources.size(); ++i) {
-            auto state = i == 1 ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        const std::array<ID3D12Resource*, 4> resources = {color.resource.Get(), output.resource.Get(),
+                                                          vectors.resource.Get(), depth.resource.Get()};
+        for (size_t i = 0; i < resources.size(); ++i) {
+            auto state = i == 1 && !outputRead ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS
+                                               : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
             barriers[i].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
             auto& transition = barriers[i].Transition;
             transition.pResource = resources[i];
@@ -403,21 +591,54 @@ struct NeuralPass::Impl {
         }
         list->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
     }
-    ID3D11Texture2D* Run(ID3D11Texture2D* frame, long long timestamp, int intensity) {
+    ID3D11Texture2D* Run(ID3D11Texture2D* frame, long long timestamp, float defaultFrameTimeMs) {
+        if (!nrUsable && !srUsable && !fgUsable && !recreateFG) {
+            asyncOutput.Invalidate();
+            published = nullptr;
+            generatedCount = 0;
+            return nullptr;
+        }
         const auto action = history.Classify(timestamp);
-        if (action == FrameHistory::Action::Reset) asyncOutput.Invalidate();
+        if (action == FrameHistory::Action::Reset) {
+            asyncOutput.Invalidate();
+            published = nullptr;
+            generatedCount = 0;
+        }
         const auto completed = Completed();
-        if (asyncOutput.Busy(completed)) return asyncOutput.Available() ? display.Get() : nullptr;
+        if (asyncOutput.Busy(completed))
+            return asyncOutput.Available() ? published : nullptr;
         if (asyncOutput.Collect(completed)) {
             // Already completed: acquire the shared resource without waiting for inference.
             Check(context11->Wait(fence11.Get(), submitted), "Acquire completed NR output");
-            context11->CopyResource(display.Get(), output.texture.Get());
+            published = pendingScaled ? displayScaled.Get() : display.Get();
+            context11->CopyResource(published, pendingReal);
+            generatedCount = pendingHasFG ? frameGeneration.Collect() : 0;
+            for (unsigned i = 0; i < generatedCount; ++i)
+                context11->CopyResource(displayGenerated[i].Get(), generated[i].texture.Get());
+            outputDuration = pendingDuration;
+            ++serial;
             ReadTiming();
         }
-        if (action == FrameHistory::Action::Repeat) return asyncOutput.Available() ? display.Get() : nullptr;
+        if (action == FrameHistory::Action::Repeat)
+            return asyncOutput.Available() ? published : nullptr;
         Begin();
-        const bool reset = action == FrameHistory::Action::Reset;
-        const UINT data[] = {width, height, static_cast<UINT>(rect.left), static_cast<UINT>(rect.top), reset ? 1u : 0u, 0, 0, 0};
+        bool reset = action == FrameHistory::Action::Reset;
+        if (recreateFG) {
+            try {
+                CreateFrameGeneration();
+            } catch (const std::exception& error) {
+                recreateFG = false;
+                fgFailure = ngx::Message(error);
+            }
+        }
+        const float frameTimeMs =
+            !reset && timestamp > lastInputTimestamp
+                ? std::clamp(static_cast<float>(timestamp - lastInputTimestamp) / 10000.0f, 1.0f, 500.0f)
+                : defaultFrameTimeMs;
+        pendingDuration = static_cast<long long>(frameTimeMs * 10000.0f);
+        lastInputTimestamp = timestamp;
+        const UINT data[] = {
+            width, height, static_cast<UINT>(rect.left), static_cast<UINT>(rect.top), reset ? 1u : 0u, 0, 0, 0};
         context11->OMSetRenderTargets(0, nullptr, nullptr);
         context11->Begin(preparationClock.Get());
         context11->End(preparationStart.Get());
@@ -430,17 +651,21 @@ struct NeuralPass::Impl {
         context11->CSSetShader(prepare.Get(), nullptr, 0);
         context11->CSSetShaderResources(0, 2, input);
         context11->CSSetUnorderedAccessViews(0, 1, target, nullptr);
-        context11->Dispatch((width+7)/8, (height+7)/8, 1);
+        context11->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
         target[0] = nullptr;
         context11->CSSetUnorderedAccessViews(0, 1, target, nullptr);
-        if (reset) context11->CopyResource(previous.Get(), color.texture.Get());
-        input[0] = color.srv.Get(); input[1] = previousView.Get();
+        if (reset)
+            context11->CopyResource(previous.Get(), color.texture.Get());
+        input[0] = color.srv.Get();
+        input[1] = previousView.Get();
         target[0] = vectors.uav.Get();
         context11->CSSetShader(motion.Get(), nullptr, 0);
         context11->CSSetShaderResources(0, 2, input);
         context11->CSSetUnorderedAccessViews(0, 1, target, nullptr);
-        context11->Dispatch((width+7)/8, (height+7)/8, 1);
-        input[0] = input[1] = nullptr; target[0] = nullptr; cb[0] = nullptr;
+        context11->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+        input[0] = input[1] = nullptr;
+        target[0] = nullptr;
+        cb[0] = nullptr;
         context11->CSSetShaderResources(0, 2, input);
         context11->CSSetUnorderedAccessViews(0, 1, target, nullptr);
         context11->CSSetConstantBuffers(0, 1, cb);
@@ -453,76 +678,201 @@ struct NeuralPass::Impl {
         context11->Flush();
         Check(queue->Wait(fence12.Get(), ready), "D3D12 wait");
         Transition(true);
-        params->Set("DLSSNR.Color", color.resource.Get());
-        params->Set("DLSSNR.Output", output.resource.Get());
-        params->Set("DLSSNR.MVec", vectors.resource.Get());
-        params->Set("DLSSNR.Depth", depth.resource.Get());
-        for (const auto* name : {"Color", "Output", "MVec", "Depth"}) Subrect(params, name, width, height);
-        params->Set("DLSSNR.MVecScaleX", 1.0f); params->Set("DLSSNR.MVecScaleY", 1.0f);
-        params->Set("DLSSNR.DepthInverted", 1);
-        params->Set("DLSSNR.Enabled", 1);
-        params->Set("DLSSNR.Reset", reset ? 1 : 0);
-        params->Set("DLSSNR.Style", 0);
-        params->Set("DLSSNR.Intensity", intensity / 100.0f);
-        params->Set("DLSSNR.LocalToneStrength", 1.0f);
-        params->Set("DLSSNR.LocalStructureStrength", 1.0f);
-        params->Set("DLSSNR.SkinStructureStrength", 1.0f);
-        params->Set("DLSSNR.UseAutoMask", 1);
-        params->Set("DLSSNR.UICorrection", 1);
         list->EndQuery(timingQueries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
-        auto result = CallEvaluate(evaluate, list.Get(), feature, params);
+        ID3D12Resource* finalColor = color.resource.Get();
+        pendingReal = color.texture.Get();
+        pendingScaled = false;
+        pendingHasFG = false;
+        bool outputRead = false;
+        if (nrUsable) {
+            params->Set("DLSSNR.Color", color.resource.Get());
+            params->Set("DLSSNR.Output", output.resource.Get());
+            params->Set("DLSSNR.MVec", vectors.resource.Get());
+            params->Set("DLSSNR.Depth", depth.resource.Get());
+            for (const auto* name : {"Color", "Output", "MVec", "Depth"})
+                Subrect(params, name, width, height);
+            params->Set("DLSSNR.MVecScaleX", 1.0f);
+            params->Set("DLSSNR.MVecScaleY", 1.0f);
+            params->Set("DLSSNR.DepthInverted", 1);
+            params->Set("DLSSNR.Enabled", 1);
+            params->Set("DLSSNR.Reset", reset ? 1 : 0);
+            params->Set("DLSSNR.Style", 0);
+            params->Set("DLSSNR.Intensity", options.intensity / 100.0f);
+            params->Set("DLSSNR.LocalToneStrength", 1.0f);
+            params->Set("DLSSNR.LocalStructureStrength", 1.0f);
+            params->Set("DLSSNR.SkinStructureStrength", 1.0f);
+            params->Set("DLSSNR.UseAutoMask", 1);
+            params->Set("DLSSNR.UICorrection", 1);
+            const auto result = CallEvaluate(evaluate, list.Get(), feature, params);
+            if (result == NVSDK_NGX_Result_Success) {
+                ngx::Transition(list.Get(), output.resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                outputRead = true;
+                finalColor = output.resource.Get();
+                pendingReal = output.texture.Get();
+            } else {
+                nrUsable = false;
+                reset = true;
+                fgNeedsReset = true;
+                try {
+                    CheckNgx(result, "Evaluate NR");
+                } catch (const std::exception& error) {
+                    nrFailure = ngx::Message(error);
+                }
+            }
+        }
+        if (srUsable) {
+            ngx::Transition(list.Get(), scaled.resource.Get(), D3D12_RESOURCE_STATE_COMMON,
+                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            try {
+                superResolution.Dispatch(list.Get(), finalColor, depth.resource.Get(), vectors.resource.Get(),
+                                         scaled.resource.Get(), reset, frameTimeMs);
+                ngx::Transition(list.Get(), scaled.resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                finalColor = scaled.resource.Get();
+                pendingReal = scaled.texture.Get();
+                pendingScaled = true;
+            } catch (const std::exception& error) {
+                ngx::Transition(list.Get(), scaled.resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                D3D12_RESOURCE_STATE_COMMON);
+                srUsable = false;
+                fgUsable = false;
+                recreateFG = options.ManualGeneration();
+                fgFailure = L"reinitializing at native resolution";
+                srFailure = ngx::Message(error);
+            }
+        }
+        if (fgUsable) {
+            const auto count = framegen::GeneratedLimit(options.frameMultiplier, frameGeneration.MaxGenerated(),
+                                                        refreshHz, frameTimeMs);
+            fgLimitedByDisplay = count == 0;
+            if (count) {
+                std::array<ID3D12Resource*, 3> outputs{};
+                for (unsigned i = 0; i < count; ++i) {
+                    outputs[i] = generated[i].resource.Get();
+                    ngx::Transition(list.Get(), outputs[i], D3D12_RESOURCE_STATE_COMMON,
+                                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                }
+                try {
+                    frameGeneration.Dispatch(list.Get(), finalColor, depth.resource.Get(), vectors.resource.Get(),
+                                             outputs, count, reset || fgNeedsReset, frameTimeMs);
+                    pendingHasFG = true;
+                    fgNeedsReset = false;
+                } catch (const std::exception& error) {
+                    fgUsable = false;
+                    fgFailure = ngx::Message(error);
+                }
+                for (unsigned i = 0; i < count; ++i)
+                    ngx::Transition(list.Get(), outputs[i], D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                    D3D12_RESOURCE_STATE_COMMON);
+            } else
+                fgNeedsReset = true;
+        }
+        if (pendingScaled)
+            ngx::Transition(list.Get(), scaled.resource.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                            D3D12_RESOURCE_STATE_COMMON);
         list->EndQuery(timingQueries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
         list->ResolveQueryData(timingQueries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, timingReadback.Get(), 0);
-        Transition(false);
-        // Submit the cleanup barriers even if the runtime reports an evaluation failure.
+        Transition(false, outputRead);
         Submit(true);
-        CheckNgx(result, "Evaluate NR");
         history.Commit(timestamp);
-        return asyncOutput.Available() ? display.Get() : nullptr;
+        return asyncOutput.Available() ? published : nullptr;
     }
 };
+unsigned NeuralPass::GeneratedCount() const {
+    return impl_ && impl_->asyncOutput.Available() ? impl_->generatedCount : 0;
+}
+unsigned long long NeuralPass::OutputSerial() const {
+    return impl_ && impl_->asyncOutput.Available() ? impl_->serial : 0;
+}
+long long NeuralPass::OutputDuration() const {
+    return impl_ ? impl_->outputDuration : 0;
+}
+ID3D11Texture2D* NeuralPass::PresentationFrame(unsigned index) const {
+    if (!impl_ || !impl_->asyncOutput.Available())
+        return nullptr;
+    return index < impl_->generatedCount ? impl_->displayGenerated[index].Get() : impl_->published;
+}
 NeuralPass::NeuralPass() = default;
 NeuralPass::~NeuralPass() = default;
 void NeuralPass::Configure(Settings settings) {
     settings.intensity = std::clamp(settings.intensity, 0, 200);
-    if (settings_ == settings) return;
+    settings.frameMultiplier = std::clamp(settings.frameMultiplier, 1u, 4u);
+    if (settings_ == settings)
+        return;
     settings_ = settings;
     ResetDevice();
 }
 void NeuralPass::ResetDevice() {
-    impl_.reset(); failed_ = false;
-    status_ = settings_.enabled ? L"Waiting for SDR frame" : L"Off";
+    impl_.reset();
+    failed_ = false;
+    status_ = Enabled() ? L"Waiting for SDR frame" : L"Off";
 }
-void NeuralPass::ClearHistory() { if (impl_) impl_->Invalidate(); }
-ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* context,
-    ID3D11Texture2D* frame, const RECT& rect, long long timestamp, bool sdr) {
-    if (!settings_.enabled || failed_) return nullptr;
+void NeuralPass::ClearHistory() {
+    if (impl_)
+        impl_->Invalidate();
+}
+ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture2D* frame,
+                                     const RECT& rect, long long timestamp, bool sdr, SIZE targetSize, SIZE monitorSize,
+                                     double refreshHz, float frameTimeMs) {
+    if (!Enabled())
+        return nullptr;
+    const upscaling::Extent requestedTarget{static_cast<unsigned>((std::max)(1L, targetSize.cx)),
+                                            static_cast<unsigned>((std::max)(1L, targetSize.cy))};
+    const upscaling::Extent monitor{static_cast<unsigned>((std::max)(1L, monitorSize.cx)),
+                                    static_cast<unsigned>((std::max)(1L, monitorSize.cy))};
+    const upscaling::Extent sourceSize{static_cast<unsigned>(rect.right - rect.left),
+                                       static_cast<unsigned>(rect.bottom - rect.top)};
+    const auto target = (settings_.upscaler != processing::Upscaler::Off) &&
+                                upscaling::ShouldUpscale(sourceSize, requestedTarget, monitor)
+                            ? requestedTarget
+                            : sourceSize;
+    if (!settings_.enabled && !settings_.ManualGeneration() &&
+        (settings_.upscaler == processing::Upscaler::Off || !upscaling::ShouldUpscale(sourceSize, target, monitor))) {
+        if (impl_)
+            ResetDevice();
+        status_ =
+            std::wstring(L"NR: Off\n") + processing::Name(settings_.upscaler) + L" upscaling: native size / downscale";
+        return nullptr;
+    }
+    frameTimeMs = std::isfinite(frameTimeMs) ? std::clamp(frameTimeMs, 1.0f, 500.0f) : 16.6667f;
+    if (!std::isfinite(refreshHz) || refreshHz <= 0)
+        refreshHz = 60;
     D3D11_TEXTURE2D_DESC desc{};
     frame->GetDesc(&desc);
-    if (!sdr) { Bypass(L"Bypass: SDR source required"); return nullptr; }
-    if (desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
-        Bypass(L"Bypass: 8-bit internal format required"); return nullptr;
+    if (!sdr) {
+        Bypass(L"Bypass: SDR source required");
+        return nullptr;
     }
-    if (rect.left < 0 || rect.top < 0 || rect.right > static_cast<LONG>(desc.Width) || rect.bottom > static_cast<LONG>(desc.Height)
-        || rect.right <= rect.left || rect.bottom <= rect.top || desc.SampleDesc.Count != 1) {
-        Bypass(L"Bypass: video rectangle outside frame"); return nullptr;
+    if (desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
+        Bypass(L"Bypass: 8-bit internal format required");
+        return nullptr;
+    }
+    if (rect.left < 0 || rect.top < 0 || rect.right > static_cast<LONG>(desc.Width) ||
+        rect.bottom > static_cast<LONG>(desc.Height) || rect.right <= rect.left || rect.bottom <= rect.top ||
+        desc.SampleDesc.Count != 1) {
+        Bypass(L"Bypass: video rectangle outside frame");
+        return nullptr;
     }
     try {
         if (impl_) {
             D3D11_TEXTURE2D_DESC old{};
             impl_->source->GetDesc(&old);
-            if (impl_->device11.Get() != device || !EqualRect(&impl_->rect, &rect) || old.Width != desc.Width || old.Height != desc.Height || impl_->sourceFormat != desc.Format)
+            if (impl_->device11.Get() != device || !EqualRect(&impl_->rect, &rect) || old.Width != desc.Width ||
+                old.Height != desc.Height || impl_->sourceFormat != desc.Format || impl_->target != target)
                 impl_.reset();
         }
         if (!impl_) {
             impl_ = std::make_unique<Impl>();
-            impl_->Initialize(device, context, frame, rect);
+            impl_->Initialize(device, context, frame, rect, settings_, target, monitor, refreshHz);
         }
-        auto result = impl_->Run(frame, timestamp, settings_.intensity);
+        impl_->refreshHz = refreshHz;
+        auto result = impl_->Run(frame, timestamp, frameTimeMs);
         status_ = impl_->Status();
         return result;
     } catch (const std::exception& error) {
-        impl_.reset(); failed_ = true;
+        impl_.reset();
+        failed_ = true;
         const std::string message = error.what();
         status_ = L"Bypass: " + std::wstring(message.begin(), message.end());
         OutputDebugStringW((L"MPC Neural Renderer: " + status_ + L"\n").c_str());
@@ -534,11 +884,33 @@ ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* 
 #else
 namespace neural {
 struct NeuralPass::Impl {};
-NeuralPass::NeuralPass() { status_ = L"Unsupported: use the x64 renderer"; }
+NeuralPass::NeuralPass() {
+    status_ = L"Unsupported: use the x64 renderer";
+}
 NeuralPass::~NeuralPass() = default;
-void NeuralPass::Configure(Settings settings) { settings_ = settings; failed_ = false; }
-void NeuralPass::ResetDevice() { failed_ = false; }
+void NeuralPass::Configure(Settings settings) {
+    settings_ = settings;
+    failed_ = false;
+}
+void NeuralPass::ResetDevice() {
+    failed_ = false;
+}
 void NeuralPass::ClearHistory() {}
-ID3D11Texture2D* NeuralPass::Process(ID3D11Device*, ID3D11DeviceContext*, ID3D11Texture2D*, const RECT&, long long, bool) { return nullptr; }
+ID3D11Texture2D* NeuralPass::Process(ID3D11Device*, ID3D11DeviceContext*, ID3D11Texture2D*, const RECT&, long long,
+                                     bool, SIZE, SIZE, double, float) {
+    return nullptr;
+}
+unsigned NeuralPass::GeneratedCount() const {
+    return 0;
+}
+unsigned long long NeuralPass::OutputSerial() const {
+    return 0;
+}
+long long NeuralPass::OutputDuration() const {
+    return 0;
+}
+ID3D11Texture2D* NeuralPass::PresentationFrame(unsigned) const {
+    return nullptr;
+}
 }
 #endif

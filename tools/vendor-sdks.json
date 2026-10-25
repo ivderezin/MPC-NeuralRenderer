@@ -1,0 +1,107 @@
+[
+  {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/60f4ea81909200d8542eca14dccb2628b763a9a3/Kits/FidelityFX/api/include/ffx_api.h",
+    "path": "include/ffx/api/include/ffx_api.h",
+    "sha256": "E1A9D1B559EAF75F4CB401F1C43A66E2F3DC9621ABFEB58B9C6FAC56443177FD"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/60f4ea81909200d8542eca14dccb2628b763a9a3/Kits/FidelityFX/api/include/ffx_api_types.h",
+    "path": "include/ffx/api/include/ffx_api_types.h",
+    "sha256": "CC0ADC0FFC804DD7CD03C39C15581B575E416383177FFE95060201D52CC0FC49"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/60f4ea81909200d8542eca14dccb2628b763a9a3/Kits/FidelityFX/api/include/dx12/ffx_api_dx12.h",
+    "path": "include/ffx/api/include/dx12/ffx_api_dx12.h",
+    "sha256": "C9AFBC3C4C673723E9E5369A666F0FF54560543B5A93537F8FF453BF1C3BF530"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/60f4ea81909200d8542eca14dccb2628b763a9a3/Kits/FidelityFX/upscalers/include/ffx_upscale.h",
+    "path": "include/ffx/upscalers/include/ffx_upscale.h",
+    "sha256": "65BE36D5653EB71C10379E0204F7BB7CD6A8AEEC96E6F8CFFC5F59FFEB1F89BF"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/60f4ea81909200d8542eca14dccb2628b763a9a3/Kits/FidelityFX/framegeneration/include/ffx_framegeneration.h",
+    "path": "include/ffx/framegeneration/include/ffx_framegeneration.h",
+    "sha256": "E6C42F8A38AAB2C7C4FC6931545A8E5463FDF87349902EC9687D9FE4949A0566"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/60f4ea81909200d8542eca14dccb2628b763a9a3/Kits/FidelityFX/framegeneration/include/ffx_framegeneration_api_types.h",
+    "path": "include/ffx/framegeneration/include/ffx_framegeneration_api_types.h",
+    "sha256": "396596AF3DF63310674E8036ABD2AD0FCD061E61334E7A2C76653A2BE3C686B4"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/60f4ea81909200d8542eca14dccb2628b763a9a3/docs/license.md",
+    "path": "licenses/FSR-LICENSE.md",
+    "sha256": "6757F2FEC461238DA6F84F83536EC195E8C036B1773A06F6F34301B9ED8C0963"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/60f4ea81909200d8542eca14dccb2628b763a9a3/Kits/FidelityFX/signedbin/amd_fidelityfx_loader_dx12.dll",
+    "path": "runtime/amd_fidelityfx_loader_dx12.dll",
+    "sha256": "E2D85AA05A9BD9ED8B38935FDF5199372CCA6F74C12015143BB6F945EE1608AA"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/60f4ea81909200d8542eca14dccb2628b763a9a3/Kits/FidelityFX/signedbin/amd_fidelityfx_upscaler_dx12.dll",
+    "path": "runtime/amd_fidelityfx_upscaler_dx12.dll",
+    "sha256": "D0DCCCC74A43C44BA435B7A369B456E0970D8A4464E4BD683119B374F2C9FB46"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/60f4ea81909200d8542eca14dccb2628b763a9a3/Kits/FidelityFX/signedbin/amd_fidelityfx_framegeneration_dx12.dll",
+    "path": "runtime/amd_fidelityfx_framegeneration_dx12.dll",
+    "sha256": "02297BEEDD285E822D3A64F314CF00FAF378DCEC0EDC47FF0C4DD71B3A8C2F18"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/intel/xess/de0fb9c1c510661c571164e1418ceca8101dab69/inc/xess/xess.h",
+    "path": "include/xess/xess.h",
+    "sha256": "D6F09F2DFA7050C09C679FBADA2281CEF421CDB14A51AFD94EFD9AC366D71677"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/intel/xess/de0fb9c1c510661c571164e1418ceca8101dab69/inc/xess/xess_d3d12.h",
+    "path": "include/xess/xess_d3d12.h",
+    "sha256": "E740A3FC97E3E42FAF7B3CBF23D64C5484A297E70523FC44B98433D31774FB98"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/intel/xess/de0fb9c1c510661c571164e1418ceca8101dab69/inc/xess_fg/xefg_swapchain.h",
+    "path": "include/xess_fg/xefg_swapchain.h",
+    "sha256": "39F20FC1EEF0B5D3FD41E25A2C5C04734D1A2CBDCF3F3DA1C86CEFEF181CE976"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/intel/xess/de0fb9c1c510661c571164e1418ceca8101dab69/inc/xess_fg/xefg_swapchain_d3d12.h",
+    "path": "include/xess_fg/xefg_swapchain_d3d12.h",
+    "sha256": "1AA9A1C31214AAEFB2C4CA4FD3BCE29A166C8384148466D69F679EA554CF2DBC"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/intel/xess/de0fb9c1c510661c571164e1418ceca8101dab69/inc/xell/xell.h",
+    "path": "include/xell/xell.h",
+    "sha256": "D6D713A708B546A7189277923F28C9B7F746EB033F1EBC80BA76C9F57A93B398"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/intel/xess/de0fb9c1c510661c571164e1418ceca8101dab69/inc/xell/xell_d3d12.h",
+    "path": "include/xell/xell_d3d12.h",
+    "sha256": "D948779F3CD9F0E31652377346017B9FEFFEA5D1A64346149C048B218E2BD84B"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/intel/xess/de0fb9c1c510661c571164e1418ceca8101dab69/LICENSE.txt",
+    "path": "licenses/XeSS-LICENSE.txt",
+    "sha256": "784BE42C39A4A4D03CF85D88E15E59D75828FCA773CE45B8DBFFFBD7EAF208DF"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/intel/xess/de0fb9c1c510661c571164e1418ceca8101dab69/bin/libxess.dll",
+    "path": "runtime/libxess.dll",
+    "sha256": "251659DD84A3E84DE67C886A4186E01F3ECA49B00641906FE38BB6B807E5D5B7"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/intel/xess/de0fb9c1c510661c571164e1418ceca8101dab69/bin/libxess_fg.dll",
+    "path": "runtime/libxess_fg.dll",
+    "sha256": "EC5E0C65E075570C6EDE72618BB666D0BE0C2E10B2EA9762C0FE8CB8E375AB27"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/intel/xess/de0fb9c1c510661c571164e1418ceca8101dab69/bin/libxell.dll",
+    "path": "runtime/libxell.dll",
+    "sha256": "D2030DCD694FDA8F2EC7E044B13E6DB8F0B56D4BA9113A5EFAD334E3F3DED8C7"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/60f4ea81909200d8542eca14dccb2628b763a9a3/3rdpartynotice.md",
+    "path": "licenses/FSR-THIRD-PARTY-NOTICES.md",
+    "sha256": "94401A90486D1B53B528BB7F845A7B8DAF7227B60EB7C0FC3B8C5571BA202A27"
+  }
+]

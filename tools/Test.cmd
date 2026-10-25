@@ -10,7 +10,23 @@ cl /nologo /std:c++20 /EHsc /W4 /WX tests\FrameHistoryTests.cpp /Fo_bin\tests\Fr
 if errorlevel 1 exit /b 1
 _bin\tests\FrameHistoryTests.exe
 if errorlevel 1 exit /b 1
+cl /nologo /std:c++20 /EHsc /W4 /WX tests\ProcessingPolicyTests.cpp /Fo_bin\tests\ProcessingPolicyTests.obj /Fe_bin\tests\ProcessingPolicyTests.exe
+if errorlevel 1 exit /b 1
+_bin\tests\ProcessingPolicyTests.exe
+if errorlevel 1 exit /b 1
+cl /nologo /std:c++20 /EHsc /W4 /WX /DNOMINMAX tests\NeuralSettingsTests.cpp Source\NeuralRendering\NeuralSettings.cpp /Fo_bin\tests\ /Fe_bin\tests\NeuralSettingsTests.exe /link advapi32.lib
+if errorlevel 1 exit /b 1
+_bin\tests\NeuralSettingsTests.exe
+if errorlevel 1 exit /b 1
+cl /nologo /std:c++20 /EHsc /W4 /WX /DNOMINMAX tests\PresentationTimerTests.cpp Source\FrameGeneration\PresentationTimer.cpp /Fo_bin\tests\ /Fe_bin\tests\PresentationTimerTests.exe /link user32.lib winmm.lib
+if errorlevel 1 exit /b 1
+_bin\tests\PresentationTimerTests.exe
+if errorlevel 1 exit /b 1
 cl /nologo /std:c++20 /EHsc /W4 /WX /DNOMINMAX tests\MotionTests.cpp /Fo_bin\tests\MotionTests.obj /Fe_bin\tests\MotionTests.exe /link d3d11.lib d3dcompiler.lib
 if errorlevel 1 exit /b 1
 _bin\tests\MotionTests.exe
+if errorlevel 1 exit /b 1
+cl /nologo /std:c++20 /EHsc /W4 /WX /DNOMINMAX tests\ColourTransferTests.cpp Source\Processing\ColourTransfer.cpp /Fo_bin\tests\ /Fe_bin\tests\ColourTransferTests.exe /link d3d12.lib dxgi.lib d3dcompiler.lib
+if errorlevel 1 exit /b 1
+_bin\tests\ColourTransferTests.exe
 exit /b %errorlevel%

@@ -1,6 +1,38 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
+    <Filter Include="Processing"><UniqueIdentifier>{C96F9B6E-0FF7-4A25-89A0-63BFE95E7F6F}</UniqueIdentifier></Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Upscaling"><UniqueIdentifier>{F5AC20B3-59D9-487B-8374-6F4BC80979B7}</UniqueIdentifier></Filter>
+    <Filter Include="FrameGeneration"><UniqueIdentifier>{19EC12AD-1061-4943-B012-EE1D687720A5}</UniqueIdentifier></Filter>
+    <Filter Include="Ngx"><UniqueIdentifier>{1ACCF65F-BAAE-4C51-B391-B42933B3EBCC}</UniqueIdentifier></Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Processing\Providers.h"><Filter>Processing</Filter></ClInclude>
+    <ClInclude Include="Processing\RuntimeLibrary.h"><Filter>Processing</Filter></ClInclude>
+    <ClInclude Include="Processing\ResourceBarrier.h"><Filter>Processing</Filter></ClInclude>
+    <ClInclude Include="Processing\FsrApi.h"><Filter>Processing</Filter></ClInclude>
+    <ClInclude Include="Processing\ColourTransfer.h"><Filter>Processing</Filter></ClInclude>
+    <ClCompile Include="Processing\ColourTransfer.cpp"><Filter>Processing</Filter></ClCompile>
+    <ClInclude Include="Upscaling\UpscaleStage.h"><Filter>Upscaling</Filter></ClInclude>
+    <ClCompile Include="Upscaling\UpscaleStage.cpp"><Filter>Upscaling</Filter></ClCompile>
+    <ClInclude Include="FrameGeneration\GenerationPolicy.h"><Filter>FrameGeneration</Filter></ClInclude>
+    <ClInclude Include="FrameGeneration\GenerationStage.h"><Filter>FrameGeneration</Filter></ClInclude>
+    <ClCompile Include="FrameGeneration\GenerationStage.cpp"><Filter>FrameGeneration</Filter></ClCompile>
+    <ClInclude Include="FrameGeneration\XessPresenter.h"><Filter>FrameGeneration</Filter></ClInclude>
+    <ClCompile Include="FrameGeneration\XessPresenter.cpp"><Filter>FrameGeneration</Filter></ClCompile>
+    <ClCompile Include="Upscaling\DlssSuperResolution.cpp"><Filter>Upscaling</Filter></ClCompile>
+    <ClCompile Include="FrameGeneration\DlssMultiFrameGeneration.cpp"><Filter>FrameGeneration</Filter></ClCompile>
+    <ClCompile Include="FrameGeneration\PresentationTimer.cpp"><Filter>FrameGeneration</Filter></ClCompile>
+    <ClInclude Include="Ngx\Feature.h"><Filter>Ngx</Filter></ClInclude>
+    <ClInclude Include="Upscaling\UpscalePolicy.h"><Filter>Upscaling</Filter></ClInclude>
+    <ClInclude Include="Upscaling\DlssSuperResolution.h"><Filter>Upscaling</Filter></ClInclude>
+    <ClInclude Include="FrameGeneration\DlssMultiFrameGeneration.h"><Filter>FrameGeneration</Filter></ClInclude>
+    <ClInclude Include="FrameGeneration\FramePlan.h"><Filter>FrameGeneration</Filter></ClInclude>
+    <ClInclude Include="FrameGeneration\PresentationTimer.h"><Filter>FrameGeneration</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
     <Filter Include="NeuralRendering"><UniqueIdentifier>{A45E9A47-5365-47C2-BCEE-72FCCFBC1A44}</UniqueIdentifier></Filter>
   </ItemGroup>
   <ItemGroup>

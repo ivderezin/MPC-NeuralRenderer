@@ -14,3 +14,11 @@ Info property page CLSID: `3AA7E936-522B-4B6C-B625-E65DF67C089F`.
 MPC-HC external filter selection reference: https://github.com/clsid2/mpc-hc/blob/develop/src/mpc-hc/FGManager.cpp (preferred filters are included in the graph candidate list independently of the selected built-in renderer). No MPC player settings are changed during registration. Playback with this independent CLSID still needs Windows validation.
 
 Feature 18 contract reference (no source copied): https://github.com/bmitch87/DLSS5VKLayer/blob/main/extracted_pipeline_notes.md. The DLL call route is version-sensitive and must be validated on Windows.
+
+DLSS SR and standalone MFG use NVIDIA's pinned `nvsdk_ngx_helpers_d3d.h` and `nvsdk_ngx_helpers_dlssg_d3d.h`. The host owns presentation and frame pacing; no Streamline proxy swap chain or player-DLL replacement is installed.
+
+The BaseClasses `CCritSec` wrapper has a non-blocking `TryLock` addition for timer-driven presentation on the player's window thread. Class layout and existing locking behavior are unchanged.
+
+FSR headers and redistributable runtimes are fetched from GPUOpen-LibrariesAndSDKs/FidelityFX-SDK, revision `60f4ea81909200d8542eca14dccb2628b763a9a3`. XeSS SR / FG and XeLL are fetched from intel/xess, revision `de0fb9c1c510661c571164e1418ceca8101dab69`. Exact URLs and SHA-256 hashes are recorded in `tools/vendor-sdks.json`; SDK files remain outside source control. AMD and Intel license files accompany the Windows package. FSR selects the cross-vendor FSR 3.1 providers explicitly.
+
+FSR FG uses the public standalone dispatch API with `FFX_FRAMEGENERATION_FLAG_NO_SWAPCHAIN_CONTEXT_NOTIFY`. XeSS FG uses Intel's D3D12 proxy swap chain and XeLL, while the existing D3D11 video renderer draws into an offscreen surface. Shared NT-handle textures and fences transfer the completed frame and estimated guidance on the same GPU. The two frame-generation backends are mutually exclusive; selecting XeSS never calls the standalone NGX / FSR generator.

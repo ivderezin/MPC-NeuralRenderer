@@ -19,10 +19,14 @@ public:
     void ResetDevice();
     void ClearHistory();
     void Bypass(const wchar_t* reason) { ClearHistory(); status_ = reason; }
-    bool Enabled() const { return settings_.enabled && !failed_; }
+    bool Enabled() const { return (settings_.enabled || (settings_.upscaler != processing::Upscaler::Off) || settings_.ManualGeneration()) && !failed_; }
+    unsigned GeneratedCount() const;
+    unsigned long long OutputSerial() const;
+    long long OutputDuration() const;
+    ID3D11Texture2D* PresentationFrame(unsigned index) const;
     const std::wstring& Status() const { return status_; }
     // Returned texture is owned by this pass and remains valid until reset or resize.
     ID3D11Texture2D* Process(ID3D11Device* device, ID3D11DeviceContext* context,
-        ID3D11Texture2D* frame, const RECT& videoRect, long long timestamp, bool sdr);
+        ID3D11Texture2D* frame, const RECT& videoRect, long long timestamp, bool sdr, SIZE targetSize, SIZE monitorSize, double refreshHz, float frameTimeMs);
 };
 }

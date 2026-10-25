@@ -21,6 +21,7 @@
 #include "stdafx.h"
 #include <atomic>
 #include <optional>
+#include <memory>
 #include <evr.h> // for MR_VIDEO_ACCELERATION_SERVICE, because the <mfapi.h> does not contain it
 #include <Mferror.h>
 #include "Helper.h"
@@ -28,6 +29,7 @@
 #include "VideoRendererInputPin.h"
 #include "Version.h"
 #include "VideoRenderer.h"
+#include "FrameGeneration/PresentationTimer.h"
 #include "SubPic/XySubPicProvider.h"
 #include "SubPic/XySubPicQueueImpl.h"
 
@@ -101,6 +103,7 @@ static LRESULT CALLBACK ParentWndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
 {
 	auto pfnOldProc = reinterpret_cast<WNDPROC>(GetPropW(hWnd, g_pszOldParentWndProc));
 	auto pThis = static_cast<CMpcVideoRenderer*>(GetPropW(hWnd, g_pszThis));
+	if (Msg == framegen::PresentMessage() && pThis) return pThis->OnReceiveMessage(hWnd,Msg,wParam,lParam);
 
 	switch (Msg) {
 		case WM_DESTROY:
@@ -1859,6 +1862,20 @@ void CMpcVideoRenderer::DoAfterChangingDevice()
 
 LRESULT CMpcVideoRenderer::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
+	if (uMsg == framegen::PresentMessage()) {
+		// Never block the player's UI while a delivery thread might be sending it a synchronous message.
+		if (!m_InterfaceLock.TryLock()) {
+			framegen::PresentationTimer::Retry(hwnd); return 0;
+		}
+		auto unlock = [](CCritSec* lock) { lock->Unlock(); };
+		std::unique_ptr<CCritSec,decltype(unlock)> interfaceLock(&m_InterfaceLock,unlock);
+		if (!m_RendererLock.TryLock()) {
+			framegen::PresentationTimer::Retry(hwnd); return 0;
+		}
+		std::unique_ptr<CCritSec,decltype(unlock)> rendererLock(&m_RendererLock,unlock);
+		if (m_VideoProcessor) m_VideoProcessor->PresentGeneratedFrames();
+		return 0;
+	}
 	if (m_hWndDrain && !InSendMessage() && !m_bExclusiveScreen) {
 		switch (uMsg) {
 			case WM_CHAR:

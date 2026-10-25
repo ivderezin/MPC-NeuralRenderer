@@ -63,22 +63,41 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>$(SolutionDir)deps\ngx\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)deps\vendors\include;$(SolutionDir)deps\ngx\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalLibraryDirectories>$(SolutionDir)deps\ngx\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
+  <Target Name="CheckVendorSdks" BeforeTargets="ClCompile" Condition="'$(Platform)'=='x64'">
+    <Error Condition="!Exists('$(SolutionDir)deps\vendors\include\xess\xess.h') Or !Exists('$(SolutionDir)deps\vendors\include\ffx\upscalers\include\ffx_upscale.h')" Text="Run tools/Fetch-VendorSdks.ps1 before building." />
+  </Target>
   <Target Name="CheckNgxSdk" BeforeTargets="ClCompile" Condition="'$(Platform)'=='x64'">
     <Error Condition="!Exists('$(SolutionDir)deps\ngx\include\nvsdk_ngx.h') Or !Exists('$(SolutionDir)deps\ngx\lib\nvsdk_ngx_s.lib')" Text="Run tools/Fetch-NgxSdk.ps1 before building." />
   </Target>
   <ItemGroup>
+    <ClInclude Include="Processing\Providers.h" />
+    <ClInclude Include="Processing\RuntimeLibrary.h" />
+    <ClInclude Include="Processing\ResourceBarrier.h" />
+    <ClInclude Include="Processing\FsrApi.h" />
+    <ClInclude Include="Processing\ColourTransfer.h" />
+    <ClCompile Include="Processing\ColourTransfer.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClInclude Include="Upscaling\UpscaleStage.h" />
+    <ClCompile Include="Upscaling\UpscaleStage.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClInclude Include="FrameGeneration\GenerationPolicy.h" />
+    <ClInclude Include="FrameGeneration\GenerationStage.h" />
+    <ClCompile Include="FrameGeneration\GenerationStage.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClInclude Include="FrameGeneration\XessPresenter.h" />
+    <ClCompile Include="FrameGeneration\XessPresenter.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="NeuralRendering\NeuralPass.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="NeuralRendering\NeuralSettings.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="Upscaling\DlssSuperResolution.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="FrameGeneration\DlssMultiFrameGeneration.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="FrameGeneration\PresentationTimer.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="csputils.cpp" />
     <ClCompile Include="CustomAllocator.cpp" />
     <ClCompile Include="D3D11VP.cpp" />
@@ -121,6 +140,12 @@
     <ClInclude Include="NeuralRendering\FrameHistory.h" />
     <ClInclude Include="NeuralRendering\AsyncOutput.h" />
     <ClInclude Include="NeuralRendering\MotionShaders.h" />
+    <ClInclude Include="Ngx\Feature.h" />
+    <ClInclude Include="Upscaling\UpscalePolicy.h" />
+    <ClInclude Include="Upscaling\DlssSuperResolution.h" />
+    <ClInclude Include="FrameGeneration\DlssMultiFrameGeneration.h" />
+    <ClInclude Include="FrameGeneration\FramePlan.h" />
+    <ClInclude Include="FrameGeneration\PresentationTimer.h" />
     <ClInclude Include="csputils.h" />
     <ClInclude Include="CustomAllocator.h" />
     <ClInclude Include="D3D11VP.h" />

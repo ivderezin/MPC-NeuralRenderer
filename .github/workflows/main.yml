@@ -13,7 +13,10 @@ jobs:
       - name: Fetch pinned NGX SDK files
         shell: pwsh
         run: ./tools/Fetch-NgxSdk.ps1
-      - name: Frame history and GPU motion tests (WARP)
+      - name: Fetch pinned FSR and XeSS SDK files
+        shell: pwsh
+        run: ./tools/Fetch-VendorSdks.ps1
+      - name: Processing policies, presentation timer and GPU tests
         shell: cmd
         run: tools\Test.cmd
       - name: Build renderer (Release x64)
@@ -24,6 +27,8 @@ jobs:
           name: MPC-NeuralRenderer-Windows-x64
           path: |
             _bin/Filter_x64/*.ax
+            _bin/Filter_x64/*.dll
+            _bin/Filter_x64/*LICENSE*
             _bin/Filter_x64/*.cmd
             _bin/Filter_x64/*.md
             _bin/Filter_x64/LICENSE.txt
