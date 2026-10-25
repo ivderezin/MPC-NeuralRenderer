@@ -3218,17 +3218,24 @@ HRESULT CDX11VideoProcessor::GetDrawingBuffer(ID3D11Texture2D** texture)
 
 HRESULT CDX11VideoProcessor::PresentFrame(unsigned syncInterval, bool running)
 {
-	if (!m_xessPresenter.Active()) return m_pDXGISwapChain1->Present(syncInterval, 0);
-	const auto serial = m_neuralPass.OutputSerial();
-	const auto token = serial ? (serial << 1 | 1) : (static_cast<unsigned long long>(m_neuralFrameTimestamp) << 1);
-	const auto duration = serial ? m_neuralPass.OutputDuration() : m_rtAvgTimePerFrame;
-	return m_xessPresenter.Present(syncInterval, running, token,
-		static_cast<float>(duration > 0 ? duration : 166667) / 10000.0f);
+	HRESULT hr;
+	if (!m_xessPresenter.Active()) {
+		hr = m_pDXGISwapChain1->Present(syncInterval, 0);
+	} else {
+		const auto serial = m_neuralPass.OutputSerial();
+		const auto token = serial ? (serial << 1 | 1) : (static_cast<unsigned long long>(m_neuralFrameTimestamp) << 1);
+		const auto duration = serial ? m_neuralPass.OutputDuration() : m_rtAvgTimePerFrame;
+		hr = m_xessPresenter.Present(syncInterval, running, token,
+			static_cast<float>(duration > 0 ? duration : 166667) / 10000.0f);
+	}
+	if (hr == S_OK) m_outputStats.Add(GetPreciseTick());
+	return hr;
 }
 
 void CDX11VideoProcessor::StopMfgPresentation()
 {
-	m_mfgTimer.Cancel(); m_mfgPlan.Clear(); m_mfgSerial = 0; m_mfgActive = false; m_mfgDrawStats.Reset();
+	if (m_mfgActive) ++m_mfgCounters.stops;
+	m_mfgTimer.Cancel(); m_mfgPlan.Clear(); m_mfgSerial = 0; m_mfgActive = false;
 }
 
 void CDX11VideoProcessor::PresentGeneratedFrames()
@@ -3239,7 +3246,7 @@ void CDX11VideoProcessor::PresentGeneratedFrames()
 	}
 	LARGE_INTEGER now{}, frequency{};
 	QueryPerformanceCounter(&now); QueryPerformanceFrequency(&frequency);
-	const int index = m_mfgPlan.TakeDue(now.QuadPart);
+	const int index = m_mfgPlan.TakeDue(now.QuadPart, &m_mfgCounters.skipped);
 	if (index >= 0) {
 		auto* frame = m_neuralPass.PresentationFrame(static_cast<unsigned>(index));
 		if (!frame) { StopMfgPresentation(); return; }
@@ -3265,7 +3272,10 @@ void CDX11VideoProcessor::PresentGeneratedFrames()
 		}
 		if (SUCCEEDED(hr)) {
 			g_bPresent = true; hr = PresentFrame(0, false); g_bPresent = false;
-			if (SUCCEEDED(hr)) m_mfgDrawStats.Add(GetPreciseTick());
+			if (SUCCEEDED(hr)) {
+				if (static_cast<unsigned>(index) < m_neuralPass.GeneratedCount()) m_mfgCounters.generated++;
+				else m_mfgCounters.real++;
+			}
 		}
 		if (FAILED(hr)) { StopMfgPresentation(); return; }
 	}
@@ -4953,7 +4963,12 @@ HRESULT CDX11VideoProcessor::DrawStats(ID3D11Texture2D* pRenderTarget)
 		str += L"\n" + (m_xessPresenter.Status().empty()
 			? std::wstring(L"XeSS FG: requires windowed SDR / 8-bit output") : m_xessPresenter.Status());
 	}
-	if (m_mfgActive) str += std::format(L"\nMFG presentation: {:.1f} fps",m_mfgDrawStats.GetAverageFps());
+	str += std::format(L"\nOutput: {:.1f} fps (all presents)", m_outputStats.GetAverageFps());
+	if (m_mfgActive || m_mfgCounters.generated || m_mfgCounters.stops) {
+		str += std::format(L"\nMFG presents: generated {}, real {}, late-skipped {}, plan stops {}, lock retries {}",
+			m_mfgCounters.generated, m_mfgCounters.real, m_mfgCounters.skipped, m_mfgCounters.stops,
+			framegen::PresentationTimer::RetryCount());
+	}
 	str.append(m_strStatsDispInfo);
 	str += std::format(L"\nGraph. Adapter: {}", m_strAdapterDescription);
 

@@ -26,9 +26,13 @@ public:
     }
     bool Pending() const { return next_ < count_; }
     std::int64_t NextDeadline() const { return deadlines_[next_]; }
-    int TakeDue(std::int64_t now) {
+    // Returns the latest due texture; frames overtaken by a late wakeup are counted in skipped.
+    int TakeDue(std::int64_t now, unsigned* skipped = nullptr) {
         int texture = -1;
-        while (Pending() && deadlines_[next_] <= now) texture = static_cast<int>(textures_[next_++]);
+        while (Pending() && deadlines_[next_] <= now) {
+            if (texture >= 0 && skipped) ++*skipped;
+            texture = static_cast<int>(textures_[next_++]);
+        }
         return texture;
     }
 };

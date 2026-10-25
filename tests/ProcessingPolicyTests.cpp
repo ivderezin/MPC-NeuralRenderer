@@ -43,6 +43,10 @@ int main() {
     Require(plan.TakeDue(1000)==1,"second generated frame must keep its temporal position");
     Require(plan.TakeDue(2000)==2,"third generated frame must keep its temporal position");
     Require(plan.TakeDue(3000)==3 && !plan.Pending(),"real frame must finish the batch");
+    unsigned skipped = 0;
+    plan.Start(0,4000,3,240,240000);
+    Require(plan.TakeDue(2500,&skipped)==2 && skipped==2,"late wakeup must report overtaken generated frames");
+    Require(plan.TakeDue(3000,&skipped)==3 && skipped==2,"on-time frames are not counted as skipped");
     plan.Start(0,4000,3,160,240000);
     Require(plan.TakeDue(0)==-1 && plan.TakeDue(1000)==1,"160Hz must not receive a 240fps burst");
     Require(plan.TakeDue(3000)==3 && !plan.Pending(),"refresh-limited output must still finish with the real frame");

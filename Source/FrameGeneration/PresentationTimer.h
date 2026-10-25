@@ -18,5 +18,6 @@ public:
     void Schedule(HWND window, std::int64_t deadline, std::int64_t frequency);
     void Cancel();
     static void Retry(HWND window);
+    static unsigned RetryCount();
 };
 }

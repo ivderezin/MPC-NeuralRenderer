@@ -211,7 +211,7 @@ struct NeuralPass::Impl {
     ComPtr<ID3D12Resource> timingReadback;
     UINT64 timingFrequency = 0;
     LARGE_INTEGER counterFrequency{}, lastCompletion{};
-    double gpuMilliseconds = 0, preparationMilliseconds = 0, completedFps = 0;
+    double gpuMilliseconds = 0, preparationMilliseconds = 0, completedFps = 0, initMilliseconds = 0;
     ComPtr<ID3D11Query> preparationClock, preparationStart, preparationEnd;
     AsyncOutput asyncOutput;
     ComPtr<ID3D11Fence> fence11;
@@ -241,7 +241,7 @@ struct NeuralPass::Impl {
     ID3D11Texture2D* published = nullptr;
     ID3D11Texture2D* pendingReal = nullptr;
     bool pendingScaled = false, pendingHasFG = false;
-    unsigned generatedCount = 0;
+    unsigned generatedCount = 0, discardedBatches = 0;
     unsigned long long serial = 0;
     long long lastInputTimestamp = 0, pendingDuration = 0, outputDuration = 0;
     Module snippet;
@@ -342,13 +342,15 @@ struct NeuralPass::Impl {
                 message << L"bypass (display refresh limit)";
             else if (fgUsable)
                 message << L"up to " << (std::min)(options.frameMultiplier, frameGeneration.MaxGenerated() + 1)
-                        << L"x, latest batch " << generatedCount << L" generated";
+                        << L"x, latest batch " << generatedCount << L" generated, discarded batches "
+                        << discardedBatches;
             else
                 message << (options.ManualGeneration() ? fgFailure : L"Off");
         }
         if (asyncOutput.Available())
             message << std::fixed << std::setprecision(1) << L"\nProcessing: " << completedFps << L" fps, GPU "
-                    << gpuMilliseconds << L" ms, prepare " << preparationMilliseconds << L" ms (async)";
+                    << gpuMilliseconds << L" ms, prepare " << preparationMilliseconds << L" ms (async), init "
+                    << initMilliseconds << L" ms";
         return message.str();
     }
     void Begin() {
@@ -613,6 +615,8 @@ struct NeuralPass::Impl {
             published = pendingScaled ? displayScaled.Get() : display.Get();
             context11->CopyResource(published, pendingReal);
             generatedCount = pendingHasFG ? frameGeneration.Collect() : 0;
+            if (pendingHasFG && !generatedCount)
+                ++discardedBatches;
             for (unsigned i = 0; i < generatedCount; ++i)
                 context11->CopyResource(displayGenerated[i].Get(), generated[i].texture.Get());
             outputDuration = pendingDuration;
@@ -863,8 +867,13 @@ ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* 
                 impl_.reset();
         }
         if (!impl_) {
+            LARGE_INTEGER start{}, end{}, frequency{};
+            QueryPerformanceCounter(&start);
             impl_ = std::make_unique<Impl>();
             impl_->Initialize(device, context, frame, rect, settings_, target, monitor, refreshHz);
+            QueryPerformanceCounter(&end);
+            QueryPerformanceFrequency(&frequency);
+            impl_->initMilliseconds = 1000.0 * static_cast<double>(end.QuadPart - start.QuadPart) / frequency.QuadPart;
         }
         impl_->refreshHz = refreshHz;
         auto result = impl_->Run(frame, timestamp, frameTimeMs);

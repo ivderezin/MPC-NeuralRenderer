@@ -59,7 +59,10 @@ private:
 	unsigned long long m_mfgSerial = 0;
 	bool m_mfgActive = false;
 	int m_pipelineRotation = 0;
-	CDrawStats m_mfgDrawStats;
+	CDrawStats m_outputStats; // every successful Present, real and generated
+	struct {
+		unsigned generated = 0, real = 0, skipped = 0, stops = 0;
+	} m_mfgCounters;
 	void StopMfgPresentation();
 	REFERENCE_TIME m_neuralFrameTimestamp = 0;
 	Tex2D_t m_TexNeural; // view of the latest completed NR frame, owned by m_neuralPass

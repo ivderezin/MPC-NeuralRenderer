@@ -2,6 +2,7 @@
 #include "PresentationTimer.h"
 #include <mmsystem.h>
 #include <algorithm>
+#include <atomic>
 #include <stdexcept>
 #include <memory>
 #include <new>
@@ -12,7 +13,9 @@ void CALLBACK PresentationTimer::Callback(void* context, BOOLEAN) {
 }
 namespace {
 struct RetryContext { HWND window; HMODULE module; };
+std::atomic<unsigned> retries{0};
 }
+unsigned PresentationTimer::RetryCount() { return retries.load(std::memory_order_relaxed); }
 void CALLBACK PresentationTimer::RetryCallback(PTP_CALLBACK_INSTANCE instance, void* context) {
     std::unique_ptr<RetryContext> retry(static_cast<RetryContext*>(context));
     FreeLibraryWhenCallbackReturns(instance,retry->module);
@@ -20,6 +23,7 @@ void CALLBACK PresentationTimer::RetryCallback(PTP_CALLBACK_INSTANCE instance, v
     PostMessageW(retry->window,PresentMessage(),0,0);
 }
 void PresentationTimer::Retry(HWND window) {
+    retries.fetch_add(1, std::memory_order_relaxed);
     HMODULE module = nullptr;
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,reinterpret_cast<LPCWSTR>(&RetryCallback),&module)) return;
     auto* context = new(std::nothrow) RetryContext{window,module};
