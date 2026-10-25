@@ -78,7 +78,7 @@ NVSDK_NGX_Result CallInit(InitFn fn, const wchar_t* path, ID3D12Device* device) 
 #endif
         return fn(0x0876232Cull, path, device, NVSDK_NGX_Version_API, nullptr);
 #ifdef _MSC_VER
-    } __except(EXCEPTION_EXECUTE_HANDLER) { return NVSDK_NGX_Result_FAIL; }
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return NVSDK_NGX_Result_Fail; }
 #endif
 }
 NVSDK_NGX_Result CallCreate(CreateFn fn, ID3D12GraphicsCommandList* list, NVSDK_NGX_Parameter* params, NVSDK_NGX_Handle** feature) {
@@ -87,7 +87,7 @@ NVSDK_NGX_Result CallCreate(CreateFn fn, ID3D12GraphicsCommandList* list, NVSDK_
 #endif
         return fn(list, static_cast<NVSDK_NGX_Feature>(18), params, feature);
 #ifdef _MSC_VER
-    } __except(EXCEPTION_EXECUTE_HANDLER) { return NVSDK_NGX_Result_FAIL; }
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return NVSDK_NGX_Result_Fail; }
 #endif
 }
 NVSDK_NGX_Result CallEvaluate(EvaluateFn fn, ID3D12GraphicsCommandList* list, NVSDK_NGX_Handle* feature, NVSDK_NGX_Parameter* params) {
@@ -96,7 +96,7 @@ NVSDK_NGX_Result CallEvaluate(EvaluateFn fn, ID3D12GraphicsCommandList* list, NV
 #endif
         return fn(list, feature, params, nullptr);
 #ifdef _MSC_VER
-    } __except(EXCEPTION_EXECUTE_HANDLER) { return NVSDK_NGX_Result_FAIL; }
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return NVSDK_NGX_Result_Fail; }
 #endif
 }
 void CallRelease(ReleaseFn fn, NVSDK_NGX_Handle* feature) {
