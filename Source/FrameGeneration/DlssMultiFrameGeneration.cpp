@@ -11,7 +11,8 @@ Microsoft::WRL::ComPtr<ID3D12Resource> Buffer(ID3D12Device* device, D3D12_HEAP_T
     heap.Type = type; heap.CreationNodeMask = heap.VisibleNodeMask = 1;
     D3D12_RESOURCE_DESC desc{};
     desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; desc.Width = size;
-    desc.Height = desc.DepthOrArraySize = desc.MipLevels = desc.SampleDesc.Count = 1;
+    desc.Height = desc.DepthOrArraySize = desc.MipLevels = 1;
+    desc.SampleDesc.Count = 1;
     desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR; desc.Flags = flags;
     Microsoft::WRL::ComPtr<ID3D12Resource> resource;
     ngx::CheckHr(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,state,nullptr,IID_PPV_ARGS(&resource)), "Create MFG buffer");

@@ -95,7 +95,8 @@ ComPtr<ID3D12Resource> ColourTransfer::LinearTexture(ID3D12Device* device, unsig
     desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     desc.Width = width;
     desc.Height = height;
-    desc.DepthOrArraySize = desc.MipLevels = desc.SampleDesc.Count = 1;
+    desc.DepthOrArraySize = desc.MipLevels = 1;
+    desc.SampleDesc.Count = 1;
     desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
     desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     ComPtr<ID3D12Resource> texture;
