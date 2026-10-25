@@ -44,7 +44,7 @@ int main() {
         using processing::FrameGenerator;
         using processing::Upscaler;
         auto settings = neural::Settings::Load();
-        Require(settings.upscaler == Upscaler::Dlss && settings.frameMultiplier == 1 && !settings.presentThread,
+        Require(settings.upscaler == Upscaler::Dlss && settings.frameMultiplier == 1 && settings.presentThread,
                 "Defaults changed");
         registry.Write(L"DlssUpscaling", 0);
         Require(neural::Settings::Load().upscaler == Upscaler::Off, "Legacy disabled SR must migrate");

@@ -10,7 +10,7 @@ struct Settings {
     bool ManualGeneration() const { return frameMultiplier > 1 && frameGenerator != processing::FrameGenerator::Xess; }
     unsigned frameMultiplier = 1;
     // Present DLSS / FSR generated frames from a dedicated thread with a queued schedule.
-    bool presentThread = false;
+    bool presentThread = true;
     bool operator==(const Settings&) const = default;
     static Settings Load();
     long Save() const;

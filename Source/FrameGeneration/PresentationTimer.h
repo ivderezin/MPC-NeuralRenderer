@@ -19,5 +19,6 @@ public:
     void Cancel();
     static void Retry(HWND window);
     static unsigned RetryCount();
+    static void ResetRetryCount();
 };
 }

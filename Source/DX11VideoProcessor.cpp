@@ -4404,6 +4404,11 @@ HRESULT CDX11VideoProcessor::GetVPInfo(std::wstring& str)
 void CDX11VideoProcessor::Configure(const Settings_t& config)
 {
 	StopMfgPresentation();
+	// Start presentation statistics afresh so each configuration can be compared on its own.
+	m_mfgCounters = {};
+	m_outputStats.Reset();
+	m_mfgThread.ResetRetries();
+	framegen::PresentationTimer::ResetRetryCount();
 	const bool neuralWasEnabled = m_neuralPass.Enabled();
 	const auto previousProcessing = m_processingSettings;
 	m_processingSettings = neural::Settings::Load();

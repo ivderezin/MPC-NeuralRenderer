@@ -22,6 +22,7 @@ public:
     void Stop();
     bool Running() const { return thread_.joinable(); }
     unsigned Retries() const { return retries_.load(std::memory_order_relaxed); }
+    void ResetRetries() { retries_.store(0, std::memory_order_relaxed); }
 private:
     void Run();
     std::thread thread_;

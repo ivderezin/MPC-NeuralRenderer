@@ -16,6 +16,7 @@ struct RetryContext { HWND window; HMODULE module; };
 std::atomic<unsigned> retries{0};
 }
 unsigned PresentationTimer::RetryCount() { return retries.load(std::memory_order_relaxed); }
+void PresentationTimer::ResetRetryCount() { retries.store(0, std::memory_order_relaxed); }
 void CALLBACK PresentationTimer::RetryCallback(PTP_CALLBACK_INSTANCE instance, void* context) {
     std::unique_ptr<RetryContext> retry(static_cast<RetryContext*>(context));
     FreeLibraryWhenCallbackReturns(instance,retry->module);
