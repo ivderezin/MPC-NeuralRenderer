@@ -6,6 +6,25 @@
 
 Нейрорендеринг видео, апскейл DLSS / FSR / XeSS и генерация кадров внутри Media Player Classic. Основа — форк [MPC Video Renderer](https://github.com/Aleksoid1978/VideoRenderer), GPL-3.0.
 
+### Примеры
+
+Идея проекта — попробовать нейрорендеринг в играх Nintendo Switch 2: консоль подключается через карту захвата, а MPC-HC с этим рендерером обрабатывает картинку на ПК.
+
+**Игры Nintendo Switch 2** — пары DLSS NR OFF / ON:
+
+![Игра Nintendo Switch 2: DLSS NR выключен и включён](docs/images/switch2-1.jpg)
+
+![Игра Nintendo Switch 2: DLSS NR выключен и включён](docs/images/switch2-2.jpg)
+
+![Игра Nintendo Switch 2: DLSS NR выключен и включён](docs/images/switch2-3.jpg)
+
+**Фильмы:**
+
+| NR выключен | NR включён |
+|---|---|
+| ![Кадр фильма без NR](docs/images/film-1-off.jpg) | ![Кадр фильма с NR](docs/images/film-1-on.jpg) |
+| ![Кадр фильма без NR](docs/images/film-2-off.jpg) | ![Кадр фильма с NR](docs/images/film-2-on.jpg) |
+
 ### Подключение
 
 1. Скачайте и распакуйте Windows x64 сборку из **Actions → Artifacts** или **Releases**. Оставьте DLL AMD и Intel рядом с `.ax`.
@@ -50,6 +69,25 @@ FSR 3.1 FG поддерживает **2x**. DLSS и XeSS используют д
 ## English
 
 Video neural rendering, DLSS / FSR / XeSS upscaling, and frame generation inside Media Player Classic. Based on a fork of [MPC Video Renderer](https://github.com/Aleksoid1978/VideoRenderer), GPL-3.0.
+
+### Examples
+
+The project started from wanting to try neural rendering in Nintendo Switch 2 games: the console connects through a capture card, and MPC-HC with this renderer processes the image on the PC.
+
+**Nintendo Switch 2 games** — DLSS NR OFF / ON pairs:
+
+![Nintendo Switch 2 game with DLSS NR off and on](docs/images/switch2-1.jpg)
+
+![Nintendo Switch 2 game with DLSS NR off and on](docs/images/switch2-2.jpg)
+
+![Nintendo Switch 2 game with DLSS NR off and on](docs/images/switch2-3.jpg)
+
+**Films:**
+
+| NR off | NR on |
+|---|---|
+| ![Film frame without NR](docs/images/film-1-off.jpg) | ![Film frame with NR](docs/images/film-1-on.jpg) |
+| ![Film frame without NR](docs/images/film-2-off.jpg) | ![Film frame with NR](docs/images/film-2-on.jpg) |
 
 ### Setup
 
