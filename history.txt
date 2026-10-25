@@ -1,0 +1,405 @@
+0.11.0 dev
+------------------------
+Added the ability to use metadata when converting HDR to SDR.
+Added Measured method for HDR to SDR conversion, which uses the peak luminance value for each frame.
+Added Spline method for HDR10 and Dolby Vision tone mapping.
+Fixed alignment for the 'r210' format.
+Fixed a crash when IVideoWindow::put_Owner was not called before initialization.
+
+0.10.9.2605 - 2026-10-10
+------------------------
+Added the ability to get the original frame size using IExFilterConfig::Flt_GetInt64("originalVideoSize").
+Fixed the initial inactivity of the "Apply" button.
+Fixed BT.2020 support for some cases.
+Fixed HLG  support for some cases.
+Improved Dolby Vision support.
+Super Resolution support has been adjusted.
+Improved support for FCC color space.
+Added support for NV16 format.
+Fixed DXVA2 Video Processor operation for limited-range video on AMD graphics cards (driver bug workaround).
+Fixed support for video frames with unaligned data.
+Fixes in the settings window.
+Recommended MPC-BE 1.9.1.12 or newer.
+
+0.10.7.2560 - 2026-08-01
+------------------------
+Fixed the issue with frame aspect ratios that are set to very large numbers.
+Corrected colors for Dolby Vision Profile 20.
+
+0.10.5.2552 - 2026-06-20
+------------------------
+Fixed a potential crash when using DXVA2 Video Processor.
+Fixed tone mapping when using 16-bit float textures.
+Dolby Vision Profile 7 Full Enhancement Layer is not processed because it is not supported.
+
+0.10.3.2545 - 2026-06-07
+------------------------
+Fixed 180 degree rotation not occurring in some situations.
+Fixed activation of DVD-Video menu buttons for PAL 16:9 format.
+Support for the deprecated IID_MediaSideDataDOVIMetadata has been removed. Only IID_MediaSideDataDOVIMetadataV2 will be used.
+Recommended MPC-BE 1.8.9.106 or newer.
+
+0.10.1.2531 - 2026-04-01
+------------------------
+Added support for 'UYVY' format.
+Improved handling of the D3DERR_DEVICEHUNG error for Direct3D 9.
+Fixed conversion of 'AYUV' format using shaders for Direct3D 9.
+Added a local tone mapping for HDR output (ACES, Reinhard, Habel, Mobius, BT2390, ST 2094-10). ST 2094-10 only applies to Dolby Vision.
+Added Dovi Extension Level 1/2 processing for the local tone mapping, Level 2 for HDR to SDR conversion when using D3D11.
+
+0.9.19.2490 - 2025-12-25
+------------------------
+Improved HDR display mode activation.
+The "Allow turn on/off (fullscreen)" option setting now works not only for exclusive full screen.
+Cosmetic changes to renderer statistics.
+Added tooltips for some settings.
+The RTX Video HDR setting is only available for the x64 version.
+
+0.9.17.2472 - 2025-10-23
+------------------------
+Fixed a crash in DX9 mode in some situations.
+
+0.9.15.2463 - 2025-10-01
+------------------------
+Fixed HDR mode being disabled for the display after playback ended.
+Added handling for situations where the display's HDR mode is changed externally.
+Fixed a crash in DX9 mode in some situations.
+
+0.9.13.2451 - 2025-09-15
+------------------------
+Changed the way to get a screenshot when the "RTX Video HDR" setting is active.
+Improved enabling and disabling the HDR mode for the display.
+Fixed a crash when using the DXVA2 video processor and DXVA2 decoder in some situations.
+
+0.9.11.2440 - 2025-08-05
+------------------------
+Fixed a crash when exceeding the frame size increase limit using the DXVA2/D3D11 video processor. In this case, frame size increase using shaders will be used.
+Fixed a crash when using exclusive full Screen and the "Exclusive full screen on additional window" setting in MPC-BE for two graphics adapters.
+Added "Deinterlacing" setting for DXVA2 and D3D11 video processors.
+Eliminated frame copying (ZeroCopy) when using the DXVA2 hardware decoder and DXVA2 video processor for Direct3D 9 mode.
+Eliminated frame copying (ZeroCopy) when using the D3D11 hardware decoder and D3D11 video processor for Direct3D 11 mode.
+Fixed filter registration and deregistration using included CMD files.
+
+0.9.9.2400 - 2025-06-07
+------------------------
+Fixed a crash when receiving a video frame that was smaller than required.
+Fixed a potential crash when changing the input media type.
+Added support for I420 format.
+Added support for v210 format for DX11 mode.
+
+0.9.7.2387 - 2025-04-17
+------------------------
+Fixed a potential crash when changing screen settings during playback.
+Updated MinHook v1.3.4.
+Some optimizations.
+
+0.9.5.2380 - 2025-04-05
+------------------------
+Changed image acquisition functions for HDR Passthrough mode. HDR image will be converted to SDR.
+Fixed registration of a filter from a folder with Unicode characters.
+Fixed crashes in rare cases.
+
+0.9.3.2363 - 2025-02-05
+------------------------
+"Super Resolution" now works with HDR passthrough. Requires GeForce driver version 572 or newer.
+Fixed window artifacts when using Swap effect Flip.
+Recommended MPC-BE 1.8.2.136 or newer.
+
+0.9.1.2353 - 2025-01-17
+------------------------
+Functions for getting the current and displayed video frame now use top-down RGB bitmaps.
+Added the ability to get the displayed video frame on the 10-bit display in RGB48 format.
+Fixed reinitialization when changing display when using Direct3D 11.
+Added support for the ISubRenderConsumer2 interface, which allows connecting XySubFilter.
+"Super Resolution" will be used for 10-bit video only if ACM is disabled (Windows 11 24H2).
+Recommended MPC-BE 1.8.2.12 or newer.
+
+0.8.9.2318 - 2024-12-05
+------------------------
+Added support for YUV420P10, YUV422P10, YUV444P10, GBRP10 and Y10 formats using MEDIASUBTYPE_LAV_RAWVIDEO.
+Added clarification when the "Convert to SDR" setting will work.
+"Super Resolution" will only be enabled for 8-bit video due to driver limitations.
+Added the ability to work with incorrect YUV frames (4:2:0/4:2:2 with odd dimensions).
+Recommended MPC-BE 1.8.1.43 or newer.
+
+0.8.7.2295 - 2024-10-05
+------------------------
+Cosmetic fixes to the settings window.
+Statistics font size now scales according to Windows text scale.
+Improved handling of switching the display to and from HDR mode.
+Added the "Adjust the frame presentation time" setting. The feature without setting was added earlier in the 0.7.3 release for smooth viewing of interlaced video on high-frequency displays.
+Fixed work with HDR modes when the "Automatically manage color for apps" option is enabled in Windows 11 24H2.
+
+0.8.5.2268 - 2024-07-18
+------------------------
+Added support for vertical videos when using Super Resolution.
+The "Prefer Dolby Vision over PQ and HLG" setting now also works for Dolby Vision Profile 7.
+The "Windows HDR" setting is now set to "Do not change" by default. This will prevent unexpected screen flickering.
+Fixed detection of HDR capabilities of a screen with the "Auto Color Management" option enabled in Windows 11.
+
+0.8.3.2255 - 2024-06-05
+------------------------
+Added "SDR Display nits" setting.
+Added validation of HDR metadata.
+Fixed HDR Passthrough working in some rare cases.
+Improved control of the "RTX Video HDR" setting.
+
+0.8.1.2230 - 2024-05-05
+------------------------
+"RTX Video HDR" now works with 10-bit SDR video.
+Fixed OSD and subtitle brightness adjustment for some cases.
+Fixed playback of static DVD-Video menu when frame rate doubling deinterlacing is active.
+Expanded support for "Super Resolution" to 1440p.
+Changed input format statistics for Dolby Vision.
+Improved handling of input format changes.
+Recommended MPC-BE 1.7.0.19 or newer.
+
+0.7.3.2210 - 2024-03-05
+------------------------
+Added the ability to request Super Resolution only for low resolution videos.
+"Windows HDR Mode" has been renamed to "Windows HDR".
+Improved display switching to HDR mode in some situations.
+Added support for Dolby Vision output on HDR displays.
+Added support for "RTX Video HDR" for Nvidia graphics adapters. Hardware and driver support required.
+Improved deinterlacing smoothness with double frame rate on high frequency displays.
+
+0.7.1.2172 - 2023-12-25
+------------------------
+The DXVA2 decoder is no longer supported in DirectX 11 mode.
+Added brightness and contrast adjustment for Dolby Vision.
+The YCgCo color space will now only be converted using shaders.
+Fixed closing the "Information" window after pressing the Esc key.
+Improved checking of supported format conversions for D3D11 video processor in Windows 10. This resolves the black screen issue on some AMD video adapters.
+The D3D11 video processor will not be used for unsupported formats in Windows 8/8.1.
+Fixed crashes in rare cases.
+The "Auto Display HDR On/Off" setting has been changed to "Windows HDR Mode".
+
+0.6.9.2117 - 2023-08-07
+------------------------
+Added partial support for Dolby Vision (Profiles 5, 8.1, 8.4 are supported).
+Added "Prefer Dolby Vision over PQ and HLG" option for compatible Dolby Vision formats.
+Recommended version of MPC-BE 1.6.8.24 or later.
+
+0.6.7.2013 - 2023-03-29
+------------------------
+Added "Request Super Resolution" option for Nvidia and Intel graphics adapters. Hardware and driver support required. The display of "SuperResolution*" in the statistics only means that the request was sent successfully.
+Recommended version of MPC-BE 1.6.6 or later.
+
+0.6.5.1995 - 2023-02-07
+------------------------
+The "Subtitle and OSD brightness" option now works for HDR video on an HDR display.
+Added ability to convert Stereo 3D from Half OverUnder to Interlace. Use IExFilterConfig::SetInt("stereo3dTransform", 1).
+Added subtitle offset support for Stereo 3D.
+Some optimizations.
+Recommended version of MPC-BE 1.6.5.164 (8e684d199) or later.
+
+0.6.3.1956 - 2022-08-25
+------------------------
+Optimized PQ to SDR conversion using D3D11 video processor on Windows 10.
+Added the ability to use Blend deinterlacing for YUV 4:2:0 formats when using a Shader video processor.
+Changed the default value for the "Swap effect" option to "Flip".
+
+0.6.1.1931 - 2022-07-12
+------------------------
+DX11 mode uses the new ISubRender11 subtitle rendering interface. Older players will not be able to output subtitles in DX11 mode.
+Changed coefficients for experimental Jinc2 interpolation.
+Fixed updating statistics when changing settings.
+Fixed sRGB to Linear conversions in shader video processor.
+Decrease the brightness and adjust the color of the subtitles and OSD if the display is in HDR mode.
+Fixed crash when playing DVD-Video.
+Fixed green screen in some cases.
+Recommended version of MPC-BE 1.6.3 or later.
+
+0.5.8.1877 - 2022-05-07
+------------------------
+Optimized image overlay through the IMFVideoMixerBitmap interface.
+Fixed processing of the first frames by the DXVA2 video processor on AMD and Intel graphics adapters.
+Fixed rounding errors in HDR metadata.
+Fixed work in DX11 mode when changing the display.
+Added support for Y210 and Y216 formats for DX11 mode.
+Reworked support for YUY2, AYUV, Y410, Y416 formats for Shader video processor in DX11 mode.
+Added debug information about DXGI formats to the "Information" window.
+Fixed copying of RGB24 and RGB48 with odd width size in some rare situations.
+Added experimental support for image upscaling by the "Jinc2" algorithm.
+Recommended version of MPC-BE 1.6.2.6991 (0a27de8af) or later.
+
+0.5.6.1807 - 2021-12-20
+------------------------
+Improved stability in DX9 mode when changing display.
+Fixed display of subtitles in the first frame when using XySubFilter.
+Added experimental option "Reinitialize D3D device when changing display".
+Fixed the problem with the "Information" tab working when pressing Esc when the main text field is active.
+The "Auto display HDR On/Off" functionality has been improved. Now this option has three values: "not used", "used for fullscreen", "always used".
+Fixed HDR Passthrough for various cases.
+Added support for MEDIASUBTYPE_LAV_RAWVIDEO.
+Added support for various YUV and RGB planar formats.
+Added support for r210 format.
+The "Use Direct3D 11" option is enabled by default on Windows 8 and newer systems.
+Fixed crash for RGB24 in some situations.
+
+0.5.4.1723 - 2021-06-23
+------------------------
+Fixed dithering when outputting 10-bit for DX11 mode.
+Improved compatibility with CoreAVC Video Decoder.
+Fixed frame rotation when using DXVA2 or D3D11 VP.
+Optimization of processing when using only DXVA2 or D3D11 VP.
+Added a check for the ability to create an input surface for DXVA2 VP. This fixes the Y410 format issue on Intel graphics.
+Fixed work of the last post-resize shader in DX11 mode when dithering is active.
+Improved copying speed from DXVA2 decoder surface to D3D11 texture for Intel integrated graphics.
+Fixed display of the settings window when opened from the command line (rundll32.exe).
+Improved stability in DX11 mode.
+Fixed flickering of subtitles in DX11 mode in some situations.
+Improved compatibility with PotPlayer.
+Added GetBool("doubleRate") command to get information about doubling frames. This is possible when deinterlacing is used.
+Fixed work of the debug version on systems without Windows SDK.
+Fixed crashes when working with some external filters.
+Added experimental option "Wait for V-Blank before Present".
+Recommended version of MPC-BE 1.5.7.6180 or later.
+
+0.5.2.1607 - 2021-01-15
+------------------------
+Fixed getting the displayed frame when outputting RGB 10-bit.
+Fixed display of BGRA64 format.
+Added support for BGR48 format.
+Added correction after incorrect (unsupported) conversion from YCbCr BT.2020 to RGB after DXVA2 and D3D11 VP.
+Fixed playback of some protected DVD-Videos.
+Improved "Auto display HDR On/Off" option.
+Fixed converting color space using shaders.
+Various additions and fixes in statistics.
+
+0.5.0.1567 - 2020-12-21
+------------------------
+Added the OpenConfiguration function to call settings from the command line (Example: rundll32.exe MpcVideoRenderer64.ax,OpenConfiguration).
+Fixed memory leak for Direct3D 11 mode.
+Added limitation of no more than one active renderer instance per process.
+Added displaying statistics and the ability to display AlphaBitmap (OSD) when playback is stopped.
+Added support for HDR passthrough for DX11 mode in Windows 10.
+Added the ability to switch the display to HDR mode for DX11 mode in Windows 10.
+Added the ability to manually disable conversion HDR to SDR.
+Fixed display of HLG video in various situations.
+Added support for BT.2020 Primaries for some cases.
+Fixed connections to any input media type when DXVA decoder can be active.
+Added various information to statistics.
+Recommended version of MPC-BE 1.5.6.5832 or later.
+
+v0.4.9.1460 - 2020-08-24
+------------------------
+Now DirectWrite is used instead of GDI+ to generate statistics font.
+Optimized statistics drawing.
+Fixed input stream frame rate calculation.
+Reduced unnecessary initialization of DirectX objects.
+Added the ability to increase statistics for a large window size.
+Removed "Switch to exclusive mode after a short delay" setting.
+Added support for exclusive full screen in DX11 mode.
+Improved support for exclusive full screen in DX9 mode.
+Compilation in Visual Studio 2017 now requires the Windows SDK 10.0.17763.0.
+Added support for Swap effect "Discard" in an exclusive full screen for DX11 mode.
+Removed green bars on the right and bottom when using the D3D11 decoder on AMD graphics cards.
+Renamed "Chroma scaling" setting to "Chroma upsampling" and added "Nearest-neighbor" value.
+Added information to on-screen statistics and to the "Information" window.
+Recommended version of MPC-BE 1.5.5.5369 or later.
+
+v0.4.7.1356 - 2020-06-21
+------------------------
+Added Sync Offset graph in statistics.
+Fixed getting the current image using IBasicVideo::GetCurrentImage.
+Improved playback support for some protected DVD-Video.
+Added support for mirroring ("flip").
+Added ability to change Swap effect during playback.
+Added support for exclusive full screen in DX9 mode.
+Fixed subtitles flickering after rewind.
+Recommended version of MPC-BE 1.5.5.5342 or later.
+
+v0.4.5.1242 - 2020-04-17
+------------------------
+Fixed problem with old frame output after play-stop-play.
+Fixed the green line on the right side of the frame when using a DXVA2 or D3D11 video processor and a software decoder on AMD graphics cards.
+Added support for IMFVideoMixerBitmap. Now some players can draw images over video (OSD).
+Recommended version of MPC-BE v1.5.5.5183 or later.
+
+v0.4.3.1215 - 2020-04-01
+------------------------
+Fixed frame brightness for 10 bit video after D3D11 video processor.
+Added dithering. It is used for final reduction of bit depth from 10/16 bits to 8 bits.
+Fixed statistics when playing some devices.
+Fixed frame skipping in some rare cases.
+Improved display of subtitles.
+Improved compatibility with some players.
+Added the ability to get the displayed image.
+Added the ability to switch the "Swap effect" setting during playback.
+Fixed problems with rotation and zoom in some situations.
+Added support for IVideoWindow::put_MessageDrain and IVideoWindow::get_MessageDrain calls.
+Recommended version of MPC-BE v1.5.5.5125 or later.
+
+v0.4.1.1130 - 2020-02-10
+------------------------
+Fixed freezing during frequent timeline navigation.
+Added support for "post scale" shaders.
+Some changes in statistics.
+Fixed some memory leaks.
+Added support for D3D11 mode for Windows 7 SP1.
+Added support for the ARGB64 format (BRA[64]).
+Fixed playback of Y8 and Y800 formats with an odd width.
+Recommended version of MPC-BE v1.5.5.5044 or later.
+
+v0.3.8.1060 - 2019-12-30
+------------------------
+Improved compatibility with third-party players.
+Fixed switching supported formats for DXVA2 and D3D11 video processors during playback.
+Faster statistics rendering. A pre-prepared texture with symbols is used.
+
+v0.3.6.970 - 2019-11-29
+-----------------------
+Fixed subtitle output using XySubFilter in some situations.
+Fixed crash when exiting the player or moving to the next file when using "Swap Effect Discard" in Windows 8/8.1.
+
+v0.3.4.956 - 2019-11-25
+-----------------------
+Used the surface of the DXVA2 decoder directly (without copying) if the DXVA2 video processor does not require additional frames.
+"Double the frame rate when deinterlace" setting is now enabled by default.
+Added the ability to get the filter version using the IExFilterConfig interface.
+Fixed deinterlacing in DX11 mode. Used past frames. Fixed output when doubling frames.
+Added information about the D3D11 video processor in the "Information" window.
+Added support for frame rotation.
+Optimized Discard swap effect in DX9 mode.
+Improved compatibility with some players.
+Fixed freezing when navigating the timeline in some situations.
+Recommended version of MPC-BE v1.5.4.4876 or later.
+Optimized some operations.
+Added more debugging information.
+
+v0.3.2.860 - 2019-09-25
+-----------------------
+Fixed the debug version in DX11 mode on systems in which the D3D11*SDKLayers.dll files are missing.
+Fixed HDR-SDR conversion in DX11 mode in some situations.
+Fixed DX9 mode on AMD graphics cards.
+Fixed freezes after frequent navigation on the timeline.
+The DXVA2 video processor now uses only permitted output formats. This fixes problems with AMD graphics cards.
+Allowed to use "16-bit Floating Point" textures for intermediate calculations in DX11 mode.
+Fixed subtitle blinking on some video cards in DX11 mode.
+Fixed Catmull-Rom shroma scaling when using decoder DXVA2 or D3D11.
+
+v0.3.0.831 - 2019-08-30
+-----------------------
+Improved subtitle support in DX11 mode. Fixed work with XySubFilter.
+Type redefinition fixed for RGB24 and RGB48.
+Added method "Bicubic sharp" to reduce the frame.
+Fixed incompatibility with Microsoft DTV-DVD Decoder.
+The "SurfaceFormat" setting has been renamed to "TextureFormat." The format of the values is changed, the value "Auto 8/10-bit Integer" is added.
+Fixed color adjustment in DX11 mode.
+Now the empty DXVA2_ExtendedFormat fields in the input format are set according to the specifications.
+Added support for black and white video in DX11 mode.
+Optimized copying to video memory in DX9 mode.
+Added support for YV16, YV24, P210, P216, b48r, b64a formats.
+Added interpolation method "Nearest-neighbor".
+Fixed conversion of HDR to SDR for SMPTE ST 2084 in DX11 mode.
+The runtime compilation of the color conversion shader is now used. For full support on Window 7, the D3dcompiler_47.dll library is now required, which can be installed using the KB4019990 update.
+Added the ability to disable DXVA2 and D3D11 video processors for NV12, YUY2, P010/P016 and other formats.
+Added support for chroma sample location for YUV 4: 2: 0 formats.
+Added the standard "Quality" information panel.
+Added chroma scaling setting. The Bilinear or Catmull-Rom method is available.
+Added information in statistics.
+
+v0.2.0.658 - 2019-06-18
+-----------------------
+The first official release.

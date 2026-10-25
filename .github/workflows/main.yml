@@ -1,0 +1,30 @@
+name: Build and test MPC Neural Renderer
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+      - name: Fetch pinned NGX SDK files
+        shell: pwsh
+        run: ./tools/Fetch-NgxSdk.ps1
+      - name: Frame history and GPU motion tests (WARP)
+        shell: cmd
+        run: tools\Test.cmd
+      - name: Build renderer (Release x64)
+        shell: pwsh
+        run: ./tools/Build.ps1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: MPC-NeuralRenderer-Windows-x64
+          path: |
+            _bin/Filter_x64/*.ax
+            _bin/Filter_x64/*.cmd
+            _bin/Filter_x64/*.md
+            _bin/Filter_x64/LICENSE.txt
+          if-no-files-found: error

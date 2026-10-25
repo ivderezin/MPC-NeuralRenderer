@@ -1,0 +1,181 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{C9CEECB2-947C-4902-BEF9-B98DCAF14B1C}</ProjectGuid>
+    <RootNamespace>MpcVideoRenderer</RootNamespace>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectName>MpcVideoRenderer</ProjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <Import Project="$(SolutionDir)\platform.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseOfMfc>Static</UseOfMfc>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="$(SolutionDir)\common.props" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <TargetExt>.ax</TargetExt>
+    <TargetName>MpcNeuralRenderer</TargetName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform)'=='x64'">
+    <TargetName>nvngx.dll_MpcNeuralRenderer64</TargetName>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <Link>
+      <ModuleDefinitionFile>MpcVideoRenderer.def</ModuleDefinitionFile>
+      <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
+      <DelayLoadDLLs>d3d9.dll;dxva2.dll;dxgi.dll;d3d11.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
+    </Link>
+    <PreBuildEvent>
+      <Command>..\update_revision.cmd</Command>
+    </PreBuildEvent>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(SolutionDir)Include;$(ProjectDir)</AdditionalIncludeDirectories>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(SolutionDir)deps\ngx\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(SolutionDir)deps\ngx\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+  <Target Name="CheckNgxSdk" BeforeTargets="ClCompile" Condition="'$(Platform)'=='x64'">
+    <Error Condition="!Exists('$(SolutionDir)deps\ngx\include\nvsdk_ngx.h') Or !Exists('$(SolutionDir)deps\ngx\lib\nvsdk_ngx_s.lib')" Text="Run tools/Fetch-NgxSdk.ps1 before building." />
+  </Target>
+  <ItemGroup>
+    <ClCompile Include="NeuralRendering\NeuralPass.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="NeuralRendering\NeuralSettings.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="csputils.cpp" />
+    <ClCompile Include="CustomAllocator.cpp" />
+    <ClCompile Include="D3D11VP.cpp" />
+    <ClCompile Include="D3DUtil\D3D11Font.cpp" />
+    <ClCompile Include="D3DUtil\D3D11Geometry.cpp" />
+    <ClCompile Include="D3DUtil\D3D9Font.cpp" />
+    <ClCompile Include="D3DUtil\D3D9Geometry.cpp" />
+    <ClCompile Include="DisplayConfig.cpp" />
+    <ClCompile Include="dllmain.cpp" />
+    <ClCompile Include="DX11Helper.cpp" />
+    <ClCompile Include="DX11VideoProcessor.cpp" />
+    <ClCompile Include="DX9Helper.cpp" />
+    <ClCompile Include="DX9VideoProcessor.cpp" />
+    <ClCompile Include="DXVA2VP.cpp" />
+    <ClCompile Include="Helper.cpp" />
+    <ClCompile Include="MediaSampleSideData.cpp" />
+    <ClCompile Include="PropPage.cpp" />
+    <ClCompile Include="renbase2.cpp" />
+    <ClCompile Include="Shaders.cpp" />
+    <ClCompile Include="stdafx.cpp">
+      <PrecompiledHeader>Create</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="SubPic\DX11SubPic.cpp" />
+    <ClCompile Include="SubPic\DX9SubPic.cpp" />
+    <ClCompile Include="SubPic\SubPicImpl.cpp" />
+    <ClCompile Include="SubPic\SubPicQueueImpl.cpp" />
+    <ClCompile Include="SubPic\XySubPicProvider.cpp" />
+    <ClCompile Include="SubPic\XySubPicQueueImpl.cpp" />
+    <ClCompile Include="Times.cpp" />
+    <ClCompile Include="Utils\CPUInfo.cpp" />
+    <ClCompile Include="Utils\StringUtil.cpp" />
+    <ClCompile Include="Utils\Util.cpp" />
+    <ClCompile Include="VideoProcessor.cpp" />
+    <ClCompile Include="VideoRenderer.cpp" />
+    <ClCompile Include="VideoRendererInputPin.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="NeuralRendering\NeuralPass.h" />
+    <ClInclude Include="NeuralRendering\NeuralSettings.h" />
+    <ClInclude Include="NeuralRendering\FrameHistory.h" />
+    <ClInclude Include="NeuralRendering\MotionShaders.h" />
+    <ClInclude Include="csputils.h" />
+    <ClInclude Include="CustomAllocator.h" />
+    <ClInclude Include="D3D11VP.h" />
+    <ClInclude Include="D3DUtil\D3D11Font.h" />
+    <ClInclude Include="D3DUtil\D3D11Geometry.h" />
+    <ClInclude Include="D3DUtil\D3D9Font.h" />
+    <ClInclude Include="D3DUtil\D3D9Geometry.h" />
+    <ClInclude Include="D3DUtil\D3DCommon.h" />
+    <ClInclude Include="DisplayConfig.h" />
+    <ClInclude Include="DX11Helper.h" />
+    <ClInclude Include="DX11VideoProcessor.h" />
+    <ClInclude Include="DX9Helper.h" />
+    <ClInclude Include="DX9VideoProcessor.h" />
+    <ClInclude Include="DXVA2VP.h" />
+    <ClInclude Include="D3DUtil\FontBitmap.h" />
+    <ClInclude Include="FrameStats.h" />
+    <ClInclude Include="Helper.h" />
+    <ClInclude Include="IVideoRenderer.h" />
+    <ClInclude Include="MediaSampleSideData.h" />
+    <ClInclude Include="PropPage.h" />
+    <ClInclude Include="renbase2.h" />
+    <ClInclude Include="resource.h" />
+    <ClInclude Include="Shaders.h" />
+    <ClInclude Include="stdafx.h" />
+    <ClInclude Include="SubPic\DX11SubPic.h" />
+    <ClInclude Include="SubPic\DX9SubPic.h" />
+    <ClInclude Include="SubPic\ISubPic.h" />
+    <ClInclude Include="SubPic\SubPicImpl.h" />
+    <ClInclude Include="SubPic\SubPicQueueImpl.h" />
+    <ClInclude Include="SubPic\XySubPicProvider.h" />
+    <ClInclude Include="SubPic\XySubPicQueueImpl.h" />
+    <ClInclude Include="Times.h" />
+    <ClInclude Include="Utils\CPUInfo.h" />
+    <ClInclude Include="Utils\gpu_memcpy_sse4.h" />
+    <ClInclude Include="Utils\StringUtil.h" />
+    <ClInclude Include="Utils\Util.h" />
+    <ClInclude Include="VideoProcessor.h" />
+    <ClInclude Include="VideoRenderer.h" />
+    <ClInclude Include="VideoRendererInputPin.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\external\BaseClasses.vcxproj">
+      <Project>{e8a3f6fa-ae1c-4c8e-a0b6-9c8480324eaa}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\external\minhook.vcxproj">
+      <Project>{303b855a-137d-45e9-af6d-b7241c6e66d6}</Project>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="MpcVideoRenderer.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="res\dither32x32float16.bin" />
+    <None Include="res\MpcVideoRenderer.rc2" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

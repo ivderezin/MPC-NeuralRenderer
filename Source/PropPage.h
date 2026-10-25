@@ -1,0 +1,83 @@
+/*
+ * (C) 2018-2026 see Authors.txt
+ *
+ * This file is part of MPC-BE.
+ *
+ * MPC-BE is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * MPC-BE is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ */
+
+#pragma once
+
+#include "IVideoRenderer.h"
+#include "NeuralRendering/NeuralSettings.h"
+
+// CVRMainPPage
+
+class __declspec(uuid("0BBF91D4-10CC-4835-AAC4-9C751691EBEB"))
+	CVRMainPPage : public CBasePropertyPage, public CWindow
+{
+	CComQIPtr<IVideoRenderer> m_pVideoRenderer;
+
+	Settings_t m_SetsPP;
+	neural::Settings m_neuralSettings;
+
+	int m_oldSDRDisplayNits = SDR_NITS_DEF;
+
+	bool m_bActivated = false;
+	HWND m_hHint = nullptr;
+
+public:
+	CVRMainPPage(LPUNKNOWN lpunk, HRESULT* phr);
+	~CVRMainPPage();
+
+private:
+	void SetControls();
+	void EnableControls();
+
+	HRESULT OnConnect(IUnknown* pUnknown) override;
+	HRESULT OnDisconnect() override;
+	HRESULT OnActivate() override;
+	void SetDirty() {
+		if (m_bActivated && !m_bDirty) {
+			m_bDirty = TRUE;
+			if (m_pPageSite) {
+				m_pPageSite->OnStatusChange(PROPPAGESTATUS_DIRTY);
+			}
+		}
+	}
+	INT_PTR OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) override;
+	HRESULT OnApplyChanges() override;
+
+	HWND CreateHintWindow(HWND parent, int timePop = 1700, int timeInit = 70, int timeReshow = 7);
+	void AddHint(int id, const LPCWSTR text);
+};
+
+// CVRInfoPPage
+
+class __declspec(uuid("3AA7E936-522B-4B6C-B625-E65DF67C089F"))
+	CVRInfoPPage : public CBasePropertyPage, public CWindow
+{
+	HFONT m_hMonoFont = nullptr;
+	CComQIPtr<IVideoRenderer> m_pVideoRenderer;
+
+public:
+	CVRInfoPPage(LPUNKNOWN lpunk, HRESULT* phr);
+	~CVRInfoPPage();
+
+private:
+	HRESULT OnConnect(IUnknown* pUnknown) override;
+	HRESULT OnDisconnect() override;
+	HRESULT OnActivate() override;
+};

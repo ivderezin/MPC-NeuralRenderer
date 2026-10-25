@@ -1,0 +1,17 @@
+*.user
+*.aps
+*.bak
+/.vs/
+/.vscode/
+/_bin/
+/_obj/
+/revision.h
+/signinfo.txt
+/deps/
+/build/
+/dist/
+.DS_Store
+*.dll
+*.exe
+*.ax
+*.pdb
