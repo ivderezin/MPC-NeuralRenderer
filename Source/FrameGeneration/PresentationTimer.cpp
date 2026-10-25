@@ -40,11 +40,10 @@ void PresentationTimer::Schedule(HWND window, std::int64_t deadline, std::int64_
     const auto ticks = (std::max)(std::int64_t{0},deadline-now.QuadPart);
     const auto due = static_cast<DWORD>((ticks*1000+frequency-1)/frequency);
     if (!highResolution_) highResolution_ = timeBeginPeriod(1) == TIMERR_NOERROR;
-    if (!timer_) {
-        window_ = window;
-        if (!CreateTimerQueueTimer(&timer_,nullptr,Callback,&window_,due,0,WT_EXECUTEDEFAULT))
-            throw std::runtime_error("Create MFG presentation timer failed");
-    } else if (!ChangeTimerQueueTimer(nullptr,timer_,due,0))
-        throw std::runtime_error("Schedule MFG presentation failed");
+    // ChangeTimerQueueTimer does not rearm a one-shot timer that has already fired, so recreate it.
+    if (timer_) { DeleteTimerQueueTimer(nullptr,timer_,INVALID_HANDLE_VALUE); timer_ = nullptr; }
+    window_ = window;
+    if (!CreateTimerQueueTimer(&timer_,nullptr,Callback,&window_,due,0,WT_EXECUTEDEFAULT))
+        throw std::runtime_error("Create MFG presentation timer failed");
 }
 }
