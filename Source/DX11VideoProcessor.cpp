@@ -700,6 +700,7 @@ void CDX11VideoProcessor::ReleaseVP()
 
 void CDX11VideoProcessor::ReleaseDevice()
 {
+	m_TexNeural.Release();
 	m_neuralPass.ResetDevice();
 	DLog(L"CDX11VideoProcessor::ReleaseDevice()");
 
@@ -3085,21 +3086,6 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 		hr = Process(pBackBuffer, m_srcRect, m_videoRect, m_FieldDrawn == 2);
 	}
 
-	if (SUCCEEDED(hr) && !m_renderRect.IsRectEmpty()) {
-		const bool sdr = !SourceIsHDR() && !m_bVPUseRTXVideoHDR && !m_pPSHalfOUtoInterlace
-			&& m_currentSwapChainColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
-		if (auto* texture = m_neuralPass.Process(m_pDevice, m_pDeviceContext, pBackBuffer, m_videoRect, m_neuralFrameTimestamp, sdr)) {
-			Tex2D_t processed;
-			processed.pTexture = texture;
-			texture->GetDesc(&processed.desc);
-			const auto viewResult = m_pDevice->CreateShaderResourceView(texture, nullptr, &processed.pShaderResource);
-			if (SUCCEEDED(viewResult)) {
-				TextureCopyRect(processed, pBackBuffer, CRect(0, 0, processed.desc.Width, processed.desc.Height),
-					m_videoRect, m_pPS_Simple, nullptr, 0, false);
-			}
-		}
-	}
-
 	if (!m_pPSHalfOUtoInterlace) {
 		DrawSubtitles(pBackBuffer);
 	}
@@ -3246,7 +3232,7 @@ void CDX11VideoProcessor::UpdateTexures()
 	HRESULT hr = S_OK;
 
 	if (m_D3D11VP.IsReady()) {
-		if (m_bVPScaling) {
+		if (m_bVPScaling && !NeuralActive()) {
 			CSize texsize = m_videoRect.Size();
 			hr = m_TexConvertOutput.CheckCreate(m_pDevice, m_D3D11OutputFmt, texsize.cx, texsize.cy, Tex2D_DefaultShaderRTarget);
 			if (FAILED(hr)) {
@@ -3663,13 +3649,19 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 
 	const UINT numSteps = GetPostScaleSteps();
 
+	// Neural rendering runs on the source-resolution frame, so D3D11 VP must not scale directly to the target.
+	const bool bNeural = NeuralActive();
+	if (m_neuralPass.Enabled() && !bNeural) {
+		m_neuralPass.Bypass(L"Bypass: SDR source required");
+	}
+
 	if (m_D3D11VP.IsReady()) {
 		if (!(m_iSwapEffect == SWAPEFFECT_Discard && (m_VendorId == PCIV_AMDATI || m_VendorId == PCIV_INTEL))) {
 			const bool bNeedShaderTransform =
 				(m_TexConvertOutput.desc.Width != dstRect.Width() || m_TexConvertOutput.desc.Height != dstRect.Height() || m_bFlip
 				|| dstRect.right > m_windowRect.right || dstRect.bottom > m_windowRect.bottom)
 				|| (m_bHdrPassthroughSupport && (m_bHdrPassthrough || m_bHdrLocalToneMapping)); // At least on Nvidia we can sometimes get the "D3D11: Removing Device" error here when HDR Passthrough.
-			if (!bNeedShaderTransform && !numSteps) {
+			if (!bNeedShaderTransform && !numSteps && !bNeural) {
 				m_bVPScalingUseShaders = false;
 				hr = D3D11VPPass(pRenderTarget, rSrc, dstRect, second);
 
@@ -3690,6 +3682,22 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 	}
 	else {
 		pInputTexture = &m_TexSrcVideo;
+	}
+
+	if (bNeural) {
+		if (auto* texture = m_neuralPass.Process(m_pDevice, m_pDeviceContext, pInputTexture->pTexture, rSrc, m_neuralFrameTimestamp, true)) {
+			if (m_TexNeural.pTexture != texture) {
+				m_TexNeural.Release();
+				if (SUCCEEDED(m_pDevice->CreateShaderResourceView(texture, nullptr, &m_TexNeural.pShaderResource))) {
+					m_TexNeural.pTexture = texture;
+					texture->GetDesc(&m_TexNeural.desc);
+				}
+			}
+			if (m_TexNeural.pTexture) {
+				pInputTexture = &m_TexNeural;
+				rSrc.SetRect(0, 0, m_TexNeural.desc.Width, m_TexNeural.desc.Height);
+			}
+		}
 	}
 
 	if (numSteps) {
@@ -3803,6 +3811,9 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 		}
 	}
 	else {
+		if (m_D3D11VP.IsReady()) {
+			m_bVPScalingUseShaders = rSrc.Width() != dstRect.Width() || rSrc.Height() != dstRect.Height();
+		}
 		hr = ResizeShaderPass(*pInputTexture, pRenderTarget, rSrc, dstRect, rotation);
 	}
 
@@ -4187,8 +4198,10 @@ HRESULT CDX11VideoProcessor::GetVPInfo(std::wstring& str)
 
 void CDX11VideoProcessor::Configure(const Settings_t& config)
 {
+	const bool neuralWasEnabled = m_neuralPass.Enabled();
 	m_neuralPass.Configure(neural::Settings::Load());
 	m_neuralPass.ClearHistory();
+	const bool changeNeural = neuralWasEnabled != m_neuralPass.Enabled();
 	bool changeWindow            = false;
 	bool changeDevice            = false;
 	bool changeVP                = false;
@@ -4418,6 +4431,9 @@ void CDX11VideoProcessor::Configure(const Settings_t& config)
 		}
 		UpdateTexures();
 		UpdatePostScaleTexures();
+	}
+	else if (changeNeural) {
+		UpdateTexures(); // NR needs the D3D11 VP output at source resolution
 	}
 
 	if (changeConvertShader) {

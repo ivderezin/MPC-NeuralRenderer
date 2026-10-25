@@ -119,6 +119,7 @@
     <ClInclude Include="NeuralRendering\NeuralPass.h" />
     <ClInclude Include="NeuralRendering\NeuralSettings.h" />
     <ClInclude Include="NeuralRendering\FrameHistory.h" />
+    <ClInclude Include="NeuralRendering\AsyncOutput.h" />
     <ClInclude Include="NeuralRendering\MotionShaders.h" />
     <ClInclude Include="csputils.h" />
     <ClInclude Include="CustomAllocator.h" />

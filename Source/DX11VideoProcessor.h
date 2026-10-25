@@ -46,6 +46,9 @@ class CDX11VideoProcessor
 private:
 	neural::NeuralPass m_neuralPass;
 	REFERENCE_TIME m_neuralFrameTimestamp = 0;
+	Tex2D_t m_TexNeural; // view of the latest completed NR frame, owned by m_neuralPass
+	bool NeuralSourceSupported() { return !SourceIsHDR() && !m_bVPUseRTXVideoHDR && !m_pPSHalfOUtoInterlace; }
+	bool NeuralActive() { return m_neuralPass.Enabled() && NeuralSourceSupported(); }
 	friend class CVideoRendererInputPin;
 
 	// Direct3D 11

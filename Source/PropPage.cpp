@@ -226,7 +226,7 @@ HRESULT CVRMainPPage::OnActivate()
 	m_hWnd = m_hwnd;
 	m_neuralSettings = neural::Settings::Load();
 	SendDlgItemMessageW(IDC_NEURAL_INTENSITY, CB_RESETCONTENT, 0, 0);
-	for (int intensity : {0, 25, 50, 75, 100}) {
+	for (int intensity : {0, 25, 50, 75, 100, 125, 150, 175, 200}) {
 		ComboBox_AddStringData(m_hWnd, IDC_NEURAL_INTENSITY, (std::to_wstring(intensity) + L"%").c_str(), intensity);
 	}
 

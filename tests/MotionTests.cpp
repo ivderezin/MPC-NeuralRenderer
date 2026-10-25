@@ -105,12 +105,32 @@ int main() {
             const auto index=(static_cast<size_t>(y)*size+x)*2;
             Require(pixels[index]==4 && pixels[index+1]==0,"Motion must point from current pixel to previous (+4,0)");
         }
+        for (const auto delta : {std::array<int,2>{-16,-16}, std::array<int,2>{16,16}, std::array<int,2>{0,16}, std::array<int,2>{16,0}}) {
+            for (UINT y=0; y<size; ++y) for (UINT x=0; x<size; ++x) {
+                const auto px = static_cast<UINT>(std::clamp(static_cast<int>(x)+delta[0],0,static_cast<int>(size)-1));
+                const auto py = static_cast<UINT>(std::clamp(static_cast<int>(y)+delta[1],0,static_cast<int>(size)-1));
+                memcpy(&newPixels[(static_cast<size_t>(y)*size+x)*4],&oldPixels[(static_cast<size_t>(py)*size+px)*4],4*sizeof(float));
+            }
+            auto translated=gpu.Texture(size,size,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,newPixels.data(),size*16);
+            gpu.Dispatch(shader.Get(),translated,&previous,output,size,size,0);
+            pixels=gpu.Read(output,2);
+            for (UINT y=16;y<48;y+=8) for (UINT x=16;x<48;x+=8) {
+                const auto index=(static_cast<size_t>(y)*size+x)*2;
+                Require(pixels[index]==static_cast<float>(delta[0]) && pixels[index+1]==static_cast<float>(delta[1]),"Parallel search must cover every motion candidate");
+            }
+        }
         gpu.Dispatch(shader.Get(),current,&previous,output,size,size,1);
         pixels=gpu.Read(output,2);
         for (float value:pixels) Require(value==0,"Reset must produce zero motion");
         gpu.Dispatch(shader.Get(),previous,&previous,output,size,size,0);
         pixels=gpu.Read(output,2);
         for (float value:pixels) Require(value==0,"Static frame must produce zero motion");
+        std::vector<float> flatPixels(13*11*4, 0.5f);
+        auto flat=gpu.Texture(13,11,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,flatPixels.data(),13*16);
+        auto oddMotion=gpu.Texture(13,11,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+        gpu.Dispatch(shader.Get(),flat,&flat,oddMotion,13,11,0);
+        pixels=gpu.Read(oddMotion,2);
+        for (float value:pixels) Require(value==0,"Flat regions and partial workgroups must produce zero motion");
         auto crop=gpu.Texture(13,11,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
         auto prepare=gpu.Compile(neural::PrepareShader);
         gpu.Dispatch(prepare.Get(),previous,nullptr,crop,13,11,0,5,7);

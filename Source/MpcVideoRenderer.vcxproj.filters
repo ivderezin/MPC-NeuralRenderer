@@ -9,6 +9,7 @@
     <ClInclude Include="NeuralRendering\NeuralPass.h"><Filter>NeuralRendering</Filter></ClInclude>
     <ClInclude Include="NeuralRendering\NeuralSettings.h"><Filter>NeuralRendering</Filter></ClInclude>
     <ClInclude Include="NeuralRendering\FrameHistory.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClInclude Include="NeuralRendering\AsyncOutput.h"><Filter>NeuralRendering</Filter></ClInclude>
     <ClInclude Include="NeuralRendering\MotionShaders.h"><Filter>NeuralRendering</Filter></ClInclude>
   </ItemGroup>
   <ItemGroup>

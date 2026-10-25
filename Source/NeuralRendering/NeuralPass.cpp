@@ -2,6 +2,7 @@
 #include "NeuralPass.h"
 #ifdef _WIN64
 #include "FrameHistory.h"
+#include "AsyncOutput.h"
 #include "MotionShaders.h"
 #include <d3d11_4.h>
 #include <d3d12.h>
@@ -171,13 +172,20 @@ struct NeuralPass::Impl {
     ComPtr<ID3D12CommandAllocator> allocator;
     ComPtr<ID3D12GraphicsCommandList> list;
     ComPtr<ID3D12Fence> fence12;
+    ComPtr<ID3D12QueryHeap> timingQueries;
+    ComPtr<ID3D12Resource> timingReadback;
+    UINT64 timingFrequency = 0;
+    LARGE_INTEGER counterFrequency{}, lastCompletion{};
+    double gpuMilliseconds = 0, preparationMilliseconds = 0, completedFps = 0;
+    ComPtr<ID3D11Query> preparationClock, preparationStart, preparationEnd;
+    AsyncOutput asyncOutput;
     ComPtr<ID3D11Fence> fence11;
     Handle fenceEvent;
     UINT64 fenceValue = 0, submitted = 0;
     UINT width = 0, height = 0;
     RECT rect{};
     DXGI_FORMAT sourceFormat = DXGI_FORMAT_UNKNOWN;
-    ComPtr<ID3D11Texture2D> source, previous;
+    ComPtr<ID3D11Texture2D> source, previous, display;
     ComPtr<ID3D11ShaderResourceView> sourceView, previousView;
     ComPtr<ID3D11ComputeShader> prepare, motion;
     ComPtr<ID3D11Buffer> constants;
@@ -205,18 +213,65 @@ struct NeuralPass::Impl {
         if (coreInitialized) NVSDK_NGX_D3D12_Shutdown1(device12.Get());
         if (lease) SessionActive.clear();
     }
+    UINT64 Completed() const {
+        const auto completed = fence12->GetCompletedValue();
+        if (completed == UINT64_MAX) {
+            Check(device12->GetDeviceRemovedReason(), "NR device removed");
+            throw std::runtime_error("NR fence unavailable");
+        }
+        return completed;
+    }
+    void Invalidate() {
+        history.Clear();
+        asyncOutput.Invalidate();
+        lastCompletion = {};
+        completedFps = 0;
+    }
+    void ReadTiming() {
+        const D3D12_RANGE readRange{0, sizeof(UINT64) * 2};
+        void* data = nullptr;
+        Check(timingReadback->Map(0, &readRange, &data), "Read NR timing");
+        const auto* timestamps = static_cast<const UINT64*>(data);
+        gpuMilliseconds = 1000.0 * static_cast<double>(timestamps[1] - timestamps[0]) / static_cast<double>(timingFrequency);
+        const D3D12_RANGE writtenRange{0, 0};
+        timingReadback->Unmap(0, &writtenRange);
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT clock{};
+        UINT64 start = 0, end = 0;
+        if (context11->GetData(preparationClock.Get(), &clock, sizeof(clock), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK
+            && !clock.Disjoint && clock.Frequency
+            && context11->GetData(preparationStart.Get(), &start, sizeof(start), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK
+            && context11->GetData(preparationEnd.Get(), &end, sizeof(end), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK)
+            preparationMilliseconds = 1000.0 * static_cast<double>(end - start) / static_cast<double>(clock.Frequency);
+        LARGE_INTEGER now{};
+        QueryPerformanceCounter(&now);
+        if (lastCompletion.QuadPart && now.QuadPart > lastCompletion.QuadPart) {
+            const double fps = static_cast<double>(counterFrequency.QuadPart) / static_cast<double>(now.QuadPart - lastCompletion.QuadPart);
+            completedFps = completedFps ? completedFps * 0.8 + fps * 0.2 : fps;
+        }
+        lastCompletion = now;
+    }
+    std::wstring Status() const {
+        std::wostringstream message;
+        message << (asyncOutput.Available() ? L"Active " : L"Starting ") << width << L"x" << height;
+        if (asyncOutput.Available())
+            message << std::fixed << std::setprecision(1) << L", NR " << completedFps << L" fps"
+                << L"\nNR GPU: " << gpuMilliseconds << L" ms, preparation: " << preparationMilliseconds << L" ms";
+        message << L" (async)";
+        return message.str();
+    }
     void Begin() {
-        WaitForSubmission();
+        if (asyncOutput.Busy(Completed())) throw std::logic_error("NR allocator is still in use");
         Check(allocator->Reset(), "Reset command allocator");
         Check(list->Reset(allocator.Get(), nullptr), "Reset command list");
     }
-    void Submit() {
+    void Submit(bool producesOutput) {
         Check(list->Close(), "Close command list");
         ID3D12CommandList* commands[] = {list.Get()};
         queue->ExecuteCommandLists(1, commands);
-        submitted = ++fenceValue;
-        Check(queue->Signal(fence12.Get(), submitted), "Signal D3D12 fence");
-        Check(context11->Wait(fence11.Get(), submitted), "D3D11 wait");
+        const auto signal = ++fenceValue;
+        Check(queue->Signal(fence12.Get(), signal), "Signal D3D12 fence");
+        submitted = signal;
+        asyncOutput.Submit(signal, producesOutput);
     }
     void Initialize(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture2D* frame, RECT videoRect) {
         if (SessionActive.test_and_set()) throw std::runtime_error("Another neural renderer is active in this process");
@@ -233,6 +288,22 @@ struct NeuralPass::Impl {
         Check(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device12)), "Create D3D12 device");
         D3D12_COMMAND_QUEUE_DESC queueDesc{};
         Check(device12->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&queue)), "Create command queue");
+        Check(queue->GetTimestampFrequency(&timingFrequency), "Get NR timing frequency");
+        if (!timingFrequency || !QueryPerformanceFrequency(&counterFrequency)) throw std::runtime_error("NR timing unavailable");
+        D3D12_QUERY_HEAP_DESC queryDesc{};
+        queryDesc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP; queryDesc.Count = 2;
+        Check(device12->CreateQueryHeap(&queryDesc, IID_PPV_ARGS(&timingQueries)), "Create NR timing queries");
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_READBACK;
+        heap.CreationNodeMask = heap.VisibleNodeMask = 1;
+        D3D12_RESOURCE_DESC readbackDesc{};
+        readbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        readbackDesc.Width = sizeof(UINT64) * 2;
+        readbackDesc.Height = readbackDesc.DepthOrArraySize = readbackDesc.MipLevels = 1;
+        readbackDesc.SampleDesc.Count = 1;
+        readbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        Check(device12->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &readbackDesc,
+            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&timingReadback)), "Create NR timing readback");
         Check(device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)), "Create allocator");
         Check(device12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&list)), "Create command list");
         Check(list->Close(), "Close initial list");
@@ -262,9 +333,16 @@ struct NeuralPass::Impl {
         color.texture->GetDesc(&desc);
         desc.MiscFlags = 0; desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
         Check(device->CreateTexture2D(&desc, nullptr, &previous), "Create previous frame");
+        Check(device->CreateTexture2D(&desc, nullptr, &display), "Create completed NR frame");
         Check(device->CreateShaderResourceView(previous.Get(), nullptr, &previousView), "Create previous SRV");
         prepare = Compile(device, PrepareShader);
         motion = Compile(device, MotionShader);
+        D3D11_QUERY_DESC preparationQuery{};
+        preparationQuery.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
+        Check(device->CreateQuery(&preparationQuery, &preparationClock), "Create preparation clock query");
+        preparationQuery.Query = D3D11_QUERY_TIMESTAMP;
+        Check(device->CreateQuery(&preparationQuery, &preparationStart), "Create preparation start query");
+        Check(device->CreateQuery(&preparationQuery, &preparationEnd), "Create preparation end query");
         D3D11_BUFFER_DESC buffer{};
         buffer.ByteWidth = 32; buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         Check(device->CreateBuffer(&buffer, nullptr, &constants), "Create constants");
@@ -309,7 +387,7 @@ struct NeuralPass::Impl {
         Begin();
         CheckNgx(CallCreate(create, list.Get(), params, &feature), "Create NR feature");
         if (!feature) throw std::runtime_error("NR returned no feature handle");
-        Submit();
+        Submit(false);
     }
     void Transition(bool begin) {
         std::array<D3D12_RESOURCE_BARRIER, 4> barriers{};
@@ -327,11 +405,22 @@ struct NeuralPass::Impl {
     }
     ID3D11Texture2D* Run(ID3D11Texture2D* frame, long long timestamp, int intensity) {
         const auto action = history.Classify(timestamp);
-        if (action == FrameHistory::Action::Repeat) return output.texture.Get();
+        if (action == FrameHistory::Action::Reset) asyncOutput.Invalidate();
+        const auto completed = Completed();
+        if (asyncOutput.Busy(completed)) return asyncOutput.Available() ? display.Get() : nullptr;
+        if (asyncOutput.Collect(completed)) {
+            // Already completed: acquire the shared resource without waiting for inference.
+            Check(context11->Wait(fence11.Get(), submitted), "Acquire completed NR output");
+            context11->CopyResource(display.Get(), output.texture.Get());
+            ReadTiming();
+        }
+        if (action == FrameHistory::Action::Repeat) return asyncOutput.Available() ? display.Get() : nullptr;
         Begin();
         const bool reset = action == FrameHistory::Action::Reset;
         const UINT data[] = {width, height, static_cast<UINT>(rect.left), static_cast<UINT>(rect.top), reset ? 1u : 0u, 0, 0, 0};
         context11->OMSetRenderTargets(0, nullptr, nullptr);
+        context11->Begin(preparationClock.Get());
+        context11->End(preparationStart.Get());
         context11->CopyResource(source.Get(), frame);
         context11->UpdateSubresource(constants.Get(), 0, nullptr, data, 0, 0);
         ID3D11Buffer* cb[] = {constants.Get()};
@@ -357,6 +446,8 @@ struct NeuralPass::Impl {
         context11->CSSetConstantBuffers(0, 1, cb);
         context11->CSSetShader(nullptr, nullptr, 0);
         context11->CopyResource(previous.Get(), color.texture.Get());
+        context11->End(preparationEnd.Get());
+        context11->End(preparationClock.Get());
         const auto ready = ++fenceValue;
         Check(context11->Signal(fence11.Get(), ready), "Signal D3D11 fence");
         context11->Flush();
@@ -378,19 +469,22 @@ struct NeuralPass::Impl {
         params->Set("DLSSNR.SkinStructureStrength", 1.0f);
         params->Set("DLSSNR.UseAutoMask", 1);
         params->Set("DLSSNR.UICorrection", 1);
+        list->EndQuery(timingQueries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
         auto result = CallEvaluate(evaluate, list.Get(), feature, params);
+        list->EndQuery(timingQueries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
+        list->ResolveQueryData(timingQueries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, timingReadback.Get(), 0);
         Transition(false);
         // Submit the cleanup barriers even if the runtime reports an evaluation failure.
-        Submit();
+        Submit(true);
         CheckNgx(result, "Evaluate NR");
         history.Commit(timestamp);
-        return output.texture.Get();
+        return asyncOutput.Available() ? display.Get() : nullptr;
     }
 };
 NeuralPass::NeuralPass() = default;
 NeuralPass::~NeuralPass() = default;
 void NeuralPass::Configure(Settings settings) {
-    settings.intensity = std::clamp(settings.intensity, 0, 100);
+    settings.intensity = std::clamp(settings.intensity, 0, 200);
     if (settings_ == settings) return;
     settings_ = settings;
     ResetDevice();
@@ -399,18 +493,19 @@ void NeuralPass::ResetDevice() {
     impl_.reset(); failed_ = false;
     status_ = settings_.enabled ? L"Waiting for SDR frame" : L"Off";
 }
-void NeuralPass::ClearHistory() { if (impl_) impl_->history.Clear(); }
+void NeuralPass::ClearHistory() { if (impl_) impl_->Invalidate(); }
 ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* context,
     ID3D11Texture2D* frame, const RECT& rect, long long timestamp, bool sdr) {
     if (!settings_.enabled || failed_) return nullptr;
     D3D11_TEXTURE2D_DESC desc{};
     frame->GetDesc(&desc);
-    if (!sdr || (desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM)) {
-        ClearHistory(); status_ = L"Bypass: SDR 8-bit output required"; return nullptr;
+    if (!sdr) { Bypass(L"Bypass: SDR source required"); return nullptr; }
+    if (desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
+        Bypass(L"Bypass: 8-bit internal format required"); return nullptr;
     }
     if (rect.left < 0 || rect.top < 0 || rect.right > static_cast<LONG>(desc.Width) || rect.bottom > static_cast<LONG>(desc.Height)
         || rect.right <= rect.left || rect.bottom <= rect.top || desc.SampleDesc.Count != 1) {
-        ClearHistory(); status_ = L"Bypass: video rectangle outside output"; return nullptr;
+        Bypass(L"Bypass: video rectangle outside frame"); return nullptr;
     }
     try {
         if (impl_) {
@@ -424,7 +519,7 @@ ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* 
             impl_->Initialize(device, context, frame, rect);
         }
         auto result = impl_->Run(frame, timestamp, settings_.intensity);
-        status_ = L"Active (estimated motion, zero depth)";
+        status_ = impl_->Status();
         return result;
     } catch (const std::exception& error) {
         impl_.reset(); failed_ = true;

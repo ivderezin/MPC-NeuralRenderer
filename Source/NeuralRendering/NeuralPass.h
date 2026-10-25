@@ -18,6 +18,8 @@ public:
     void Configure(Settings settings);
     void ResetDevice();
     void ClearHistory();
+    void Bypass(const wchar_t* reason) { ClearHistory(); status_ = reason; }
+    bool Enabled() const { return settings_.enabled && !failed_; }
     const std::wstring& Status() const { return status_; }
     // Returned texture is owned by this pass and remains valid until reset or resize.
     ID3D11Texture2D* Process(ID3D11Device* device, ID3D11DeviceContext* context,
