@@ -5,6 +5,7 @@
 #include "../Processing/RuntimeLibrary.h"
 #include "../Processing/ResourceBarrier.h"
 #include "../NeuralRendering/MotionShaders.h"
+#include "../NeuralRendering/MotionEstimator.h"
 #include <d3d11_4.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
@@ -93,7 +94,9 @@ struct XessPresenter::Impl {
     ComPtr<ID3D11ShaderResourceView> previousView;
     ComPtr<ID3D11ComputeShader> motion;
     ComPtr<ID3D11Buffer> constants;
-    SharedTexture scene, vectors, depth;
+    SharedTexture scene, vectors, depth, distrust;
+    neural::MotionEstimator estimator;
+    bool echoMotion = false, echoReset = true;
     unsigned width = 0, height = 0, interpolations = 1, presentId = 0;
     unsigned long long lastToken = 0;
     bool validToken = false, reset = true, enabled = false, failed = false, displayLimited = false;
@@ -147,6 +150,11 @@ struct XessPresenter::Impl {
         CheckHr(device11->CreateShaderResourceView(previous.Get(), nullptr, &previousView), "Create XeSS previous SRV");
         scene.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_B8G8R8A8_UNORM, false);
         vectors.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_R16G16_FLOAT);
+        if (echoMotion) {
+            distrust.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_R8_UNORM);
+            estimator.Initialize(device11.Get(), w, h);
+            echoReset = true;
+        }
         depth.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_R32_FLOAT);
         const float zero[4]{};
         context11->ClearUnorderedAccessViewFloat(depth.uav.Get(), zero);
@@ -269,24 +277,30 @@ struct XessPresenter::Impl {
         if (reset)
             context11->CopyResource(previous.Get(), scene.texture.Get());
         if (useFG) {
-            const UINT params[] = {width, height, 0, 0, reset ? 1u : 0u, 0, 0, 0};
-            context11->UpdateSubresource(constants.Get(), 0, nullptr, params, 0, 0);
-            ID3D11Buffer* cb[] = {constants.Get()};
-            ID3D11ShaderResourceView* input[] = {scene.srv.Get(), previousView.Get()};
-            ID3D11UnorderedAccessView* output[] = {vectors.uav.Get()};
-            context11->CSSetConstantBuffers(0, 1, cb);
-            context11->CSSetShader(motion.Get(), nullptr, 0);
-            context11->CSSetShaderResources(0, 2, input);
-            context11->CSSetUnorderedAccessViews(0, 1, output, nullptr);
-            context11->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-            input[0] = input[1] = nullptr;
-            output[0] = nullptr;
-            cb[0] = nullptr;
-            context11->CSSetShaderResources(0, 2, input);
-            context11->CSSetUnorderedAccessViews(0, 1, output, nullptr);
-            context11->CSSetConstantBuffers(0, 1, cb);
-            context11->CSSetShader(nullptr, nullptr, 0);
-        }
+            if (echoMotion) {
+                estimator.Dispatch(context11.Get(), scene.srv.Get(), vectors.uav.Get(), distrust.uav.Get(), reset || echoReset);
+                echoReset = false;
+            } else {
+                const UINT params[] = {width, height, 0, 0, reset ? 1u : 0u, 0, 0, 0};
+                context11->UpdateSubresource(constants.Get(), 0, nullptr, params, 0, 0);
+                ID3D11Buffer* cb[] = {constants.Get()};
+                ID3D11ShaderResourceView* input[] = {scene.srv.Get(), previousView.Get()};
+                ID3D11UnorderedAccessView* output[] = {vectors.uav.Get()};
+                context11->CSSetConstantBuffers(0, 1, cb);
+                context11->CSSetShader(motion.Get(), nullptr, 0);
+                context11->CSSetShaderResources(0, 2, input);
+                context11->CSSetUnorderedAccessViews(0, 1, output, nullptr);
+                context11->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+                input[0] = input[1] = nullptr;
+                output[0] = nullptr;
+                cb[0] = nullptr;
+                context11->CSSetShaderResources(0, 2, input);
+                context11->CSSetUnorderedAccessViews(0, 1, output, nullptr);
+                context11->CSSetConstantBuffers(0, 1, cb);
+                context11->CSSetShader(nullptr, nullptr, 0);
+            }
+        } else echoReset = true;
+
         context11->CopyResource(previous.Get(), scene.texture.Get());
         CheckHr(context11->Signal(fence11.Get(), ++fenceValue), "Signal XeSS source fence");
         context11->Flush();
@@ -354,15 +368,16 @@ void XessPresenter::Reset() {
 }
 HRESULT XessPresenter::Create(ID3D11Device* device, ID3D11DeviceContext* context, IDXGIFactory2* factory, HWND window,
                               DXGI_SWAP_CHAIN_DESC1 description, unsigned multiplier, double refreshHz,
-                              float frameTimeMs, const std::filesystem::path& directory, IDXGISwapChain1** swapchain) {
+                              float frameTimeMs, const std::filesystem::path& directory, IDXGISwapChain1** swapchain, bool echoMotion) {
     Reset();
     try {
         auto instance = std::make_unique<Impl>();
+        instance->echoMotion = echoMotion;
         instance->Initialize(device, context, factory, window, description, multiplier, refreshHz, frameTimeMs,
                              directory);
         CheckHr(instance->swapchain.CopyTo(swapchain), "Return XeSS swap chain");
         status_ =
-            L"XeSS FG: up to " + std::to_wstring(instance->interpolations + 1) + L"x (estimated motion, zero depth)";
+            L"XeSS FG: up to " + std::to_wstring(instance->interpolations + 1) + L"x (" + std::wstring(echoMotion ? L"EchoStorm motion" : L"fast motion") + L", zero depth)";
         impl_ = std::move(instance);
         return S_OK;
     } catch (const std::exception& error) {
@@ -407,7 +422,7 @@ HRESULT XessPresenter::Present(unsigned syncInterval, bool running, unsigned lon
         if (!impl_->failed) {
             status_ = impl_->displayLimited ? L"XeSS FG: bypass (display refresh limit)"
                 : L"XeSS FG: up to " + std::to_wstring(impl_->interpolations + 1)
-                    + L"x, latest present " + std::to_wstring(impl_->lastPresented) + L" frames (estimated motion, zero depth)";
+                    + L"x, latest present " + std::to_wstring(impl_->lastPresented) + L" frames (" + std::wstring(impl_->echoMotion ? L"EchoStorm motion" : L"fast motion") + L", zero depth)";
         }
         return result;
     } catch (const std::exception& error) {
@@ -427,7 +442,7 @@ XessPresenter::~XessPresenter() = default;
 void XessPresenter::Reset() {}
 void XessPresenter::ClearHistory() {}
 HRESULT XessPresenter::Create(ID3D11Device*, ID3D11DeviceContext*, IDXGIFactory2*, HWND, DXGI_SWAP_CHAIN_DESC1,
-                              unsigned, double, float, const std::filesystem::path&, IDXGISwapChain1**) {
+                              unsigned, double, float, const std::filesystem::path&, IDXGISwapChain1**, bool) {
     return E_NOTIMPL;
 }
 HRESULT XessPresenter::BackBuffer(ID3D11Texture2D**) const {

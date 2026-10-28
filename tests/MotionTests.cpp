@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 #include "../Source/NeuralRendering/MotionShaders.h"
+#include "../Source/NeuralRendering/MotionEstimator.h"
 using Microsoft::WRL::ComPtr;
 void Check(HRESULT result) { if (FAILED(result)) throw std::runtime_error("D3D11 test failed: " + std::to_string(static_cast<unsigned long>(result))); }
 void Require(bool result, const char* message) { if (!result) throw std::runtime_error(message); }
@@ -132,6 +133,68 @@ int main() {
         gpu.Dispatch(shader.Get(),flat,&flat,oddMotion,13,11,0);
         pixels=gpu.Read(oddMotion,2);
         for (float value:pixels) Require(value==0,"Flat regions and partial workgroups must produce zero motion");
+        // Exercise the production EchoStorm path, including its history and pyramid orchestration.
+        neural::MotionEstimator echo;
+        constexpr UINT flowWidth=256, flowHeight=128;
+        std::vector<float> referencePixels(flowWidth*flowHeight*4), movedPixels(referencePixels.size());
+        auto referenceValue=[](UINT x,UINT y) {
+            unsigned v=(x/4+1)*73856093u ^ (y/4+1)*19349663u;
+            v^=v>>13; v*=1274126177u;
+            return .1f+.8f*static_cast<float>(v&65535)/65535.0f;
+        };
+        for (UINT y=0;y<flowHeight;++y) for (UINT x=0;x<flowWidth;++x) {
+            const size_t at=(static_cast<size_t>(y)*flowWidth+x)*4;
+            referencePixels[at]=referencePixels[at+1]=referencePixels[at+2]=referenceValue(x,y);
+            referencePixels[at+3]=1;
+        }
+        auto reference=gpu.Texture(flowWidth,flowHeight,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,referencePixels.data(),flowWidth*16);
+        auto dense=gpu.Texture(flowWidth,flowHeight,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+        auto distrust=gpu.Texture(flowWidth,flowHeight,DXGI_FORMAT_R32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+        for (const auto shift : {std::array<int,2>{48,0},{-24,8},{5,-3}}) {
+            echo.Initialize(gpu.device.Get(),flowWidth,flowHeight);
+            Require(echo.Levels()>=3,"EchoStorm must search a multilevel pyramid");
+            echo.Dispatch(gpu.context.Get(),reference.srv.Get(),dense.uav.Get(),distrust.uav.Get(),false);
+            for (float value:gpu.Read(dense,2)) Require(value==0,"First EchoStorm frame must reset motion");
+            for (UINT y=0;y<flowHeight;++y) for (UINT x=0;x<flowWidth;++x) {
+                const auto px=static_cast<UINT>(std::clamp(static_cast<int>(x)+shift[0],0,static_cast<int>(flowWidth)-1));
+                const auto py=static_cast<UINT>(std::clamp(static_cast<int>(y)+shift[1],0,static_cast<int>(flowHeight)-1));
+                const size_t at=(static_cast<size_t>(y)*flowWidth+x)*4;
+                const size_t from=(static_cast<size_t>(py)*flowWidth+px)*4;
+                std::copy_n(referencePixels.data()+from,4,movedPixels.data()+at);
+            }
+            auto moved=gpu.Texture(flowWidth,flowHeight,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,movedPixels.data(),flowWidth*16);
+            echo.Dispatch(gpu.context.Get(),moved.srv.Get(),dense.uav.Get(),distrust.uav.Get(),false);
+            const auto field=gpu.Read(dense,2);
+            float error=0; unsigned count=0;
+            for (UINT y=32;y<96;y+=4) for (UINT x=64;x<160;x+=4) {
+                const size_t at=(static_cast<size_t>(y)*flowWidth+x)*2;
+                error+=std::abs(field[at]-static_cast<float>(shift[0]))+std::abs(field[at+1]-static_cast<float>(shift[1])); ++count;
+            }
+            Require(error/static_cast<float>(count)<1.0f,"EchoStorm must recover large, negative and non-four-pixel motion in source-pixel units");
+            for (float value:gpu.Read(distrust,1)) Require(std::isfinite(value)&&value>=0&&value<=1,"Motion distrust must remain finite and normalized");
+            echo.Dispatch(gpu.context.Get(),moved.srv.Get(),dense.uav.Get(),distrust.uav.Get(),true);
+            for (float value:gpu.Read(dense,2)) Require(value==0,"Seek/reset must discard EchoStorm history");
+            echo.Dispatch(gpu.context.Get(),moved.srv.Get(),dense.uav.Get(),distrust.uav.Get(),false);
+            for (float value:gpu.Read(dense,2)) Require(value==0,"Static EchoStorm frames must have exactly zero motion");
+        }
+        // Fixed HUD over a moving background: its exact stationary match must win.
+        for (UINT y=40;y<72;++y) for (UINT x=88;x<120;++x) {
+            const size_t at=(static_cast<size_t>(y)*flowWidth+x)*4;
+            std::copy_n(referencePixels.data()+at,4,movedPixels.data()+at);
+        }
+        auto hud=gpu.Texture(flowWidth,flowHeight,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,movedPixels.data(),flowWidth*16);
+        echo.Dispatch(gpu.context.Get(),reference.srv.Get(),dense.uav.Get(),distrust.uav.Get(),true);
+        echo.Dispatch(gpu.context.Get(),hud.srv.Get(),dense.uav.Get(),distrust.uav.Get(),false);
+        const auto hudFlow=gpu.Read(dense,2);
+        for (UINT y=44;y<68;++y) for (UINT x=92;x<116;++x) {
+            const size_t at=(static_cast<size_t>(y)*flowWidth+x)*2;
+            Require(hudFlow[at]==0&&hudFlow[at+1]==0,"Stationary HUD must not inherit background motion");
+        }
+        echo.Initialize(gpu.device.Get(),13,11);
+        auto oddDistrust=gpu.Texture(13,11,DXGI_FORMAT_R32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+        echo.Dispatch(gpu.context.Get(),flat.srv.Get(),oddMotion.uav.Get(),oddDistrust.uav.Get(),true);
+        echo.Dispatch(gpu.context.Get(),flat.srv.Get(),oddMotion.uav.Get(),oddDistrust.uav.Get(),false);
+        for (float value:gpu.Read(oddMotion,2)) Require(value==0,"Odd/flat frames must not generate noisy EchoStorm motion");
         auto crop=gpu.Texture(13,11,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
         auto prepare=gpu.Compile(neural::PrepareShader.c_str());
         gpu.Dispatch(prepare.Get(),previous,nullptr,crop,13,11,0,5,7);

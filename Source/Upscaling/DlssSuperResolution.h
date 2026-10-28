@@ -8,6 +8,6 @@ class DlssSuperResolution : public ngx::Feature {
 public:
     void Create(ID3D12GraphicsCommandList* list, Extent source, Extent target);
     NVSDK_NGX_Result Evaluate(ID3D12GraphicsCommandList* list, ID3D12Resource* color,
-        ID3D12Resource* depth, ID3D12Resource* motion, ID3D12Resource* output, bool reset, float frameTimeMs);
+        ID3D12Resource* depth, ID3D12Resource* motion, ID3D12Resource* output, bool reset, float frameTimeMs, ID3D12Resource* distrust = nullptr);
 };
 }

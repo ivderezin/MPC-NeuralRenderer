@@ -4,6 +4,7 @@
 #include "FrameHistory.h"
 #include "AsyncOutput.h"
 #include "MotionShaders.h"
+#include "MotionEstimator.h"
 #include "../Upscaling/UpscaleStage.h"
 #include "../FrameGeneration/GenerationStage.h"
 #include "../FrameGeneration/GenerationPolicy.h"
@@ -225,7 +226,8 @@ struct NeuralPass::Impl {
     ComPtr<ID3D11ShaderResourceView> sourceView, previousView;
     ComPtr<ID3D11ComputeShader> prepare, motion, scaleMotion;
     ComPtr<ID3D11Buffer> constants, scaleConstants;
-    SharedTexture color, output, vectors, depth;
+    SharedTexture color, output, vectors, depth, distrust;
+    MotionEstimator echoMotion;
     FrameHistory history;
     Settings options;
     upscaling::Extent target{}, monitor{};
@@ -338,6 +340,7 @@ struct NeuralPass::Impl {
     }
     std::wstring Status() const {
         std::wostringstream message;
+        message << L"Motion: " << neural::Name(options.motionMethod) << L"\n";
         if (hdr) message << L"HDR: PQ / BT.2020, SDR proxy + linear-light residual, 10-bit output\n";
         if (options.enabled) {
             if (!nrUsable && !nrPostUsable)
@@ -468,6 +471,10 @@ struct NeuralPass::Impl {
         color.Create(device, device12.Get(), width, height, DXGI_FORMAT_R8G8B8A8_UNORM);
         output.Create(device, device12.Get(), width, height, DXGI_FORMAT_R8G8B8A8_UNORM);
         vectors.Create(device, device12.Get(), width, height, DXGI_FORMAT_R16G16_FLOAT);
+        if (options.motionMethod == MotionMethod::EchoStorm) {
+            distrust.Create(device, device12.Get(), width, height, DXGI_FORMAT_R8_UNORM);
+            echoMotion.Initialize(device, width, height);
+        }
         depth.Create(device, device12.Get(), width, height, DXGI_FORMAT_R32_FLOAT);
         color.texture->GetDesc(&desc);
         desc.MiscFlags = 0;
@@ -703,6 +710,10 @@ struct NeuralPass::Impl {
             transition.StateAfter = begin ? state : D3D12_RESOURCE_STATE_COMMON;
         }
         list->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+        if (distrust.resource)
+            ngx::Transition(list.Get(), distrust.resource.Get(),
+                begin ? D3D12_RESOURCE_STATE_COMMON : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                begin ? D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE : D3D12_RESOURCE_STATE_COMMON);
     }
     ID3D11Texture2D* Run(ID3D11Texture2D* frame, long long timestamp, float defaultFrameTimeMs) {
         if (!nrUsable && !nrPostUsable && !srUsable && !fgUsable && !recreateFG) {
@@ -778,20 +789,24 @@ struct NeuralPass::Impl {
         context11->CSSetUnorderedAccessViews(0, 1, target, nullptr);
         if (reset)
             context11->CopyResource(previous.Get(), color.texture.Get());
-        input[0] = color.srv.Get();
-        input[1] = previousView.Get();
-        target[0] = vectors.uav.Get();
-        context11->CSSetShader(motion.Get(), nullptr, 0);
-        context11->CSSetShaderResources(0, 2, input);
-        context11->CSSetUnorderedAccessViews(0, 1, target, nullptr);
-        context11->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-        input[0] = input[1] = nullptr;
-        target[0] = nullptr;
-        cb[0] = nullptr;
-        context11->CSSetShaderResources(0, 2, input);
-        context11->CSSetUnorderedAccessViews(0, 1, target, nullptr);
-        context11->CSSetConstantBuffers(0, 1, cb);
-        context11->CSSetShader(nullptr, nullptr, 0);
+        if (options.motionMethod == MotionMethod::EchoStorm) {
+            echoMotion.Dispatch(context11.Get(), color.srv.Get(), vectors.uav.Get(), distrust.uav.Get(), reset);
+        } else {
+            input[0] = color.srv.Get();
+            input[1] = previousView.Get();
+            target[0] = vectors.uav.Get();
+            context11->CSSetShader(motion.Get(), nullptr, 0);
+            context11->CSSetShaderResources(0, 2, input);
+            context11->CSSetUnorderedAccessViews(0, 1, target, nullptr);
+            context11->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+            input[0] = input[1] = nullptr;
+            target[0] = nullptr;
+            cb[0] = nullptr;
+            context11->CSSetShaderResources(0, 2, input);
+            context11->CSSetUnorderedAccessViews(0, 1, target, nullptr);
+            context11->CSSetConstantBuffers(0, 1, cb);
+            context11->CSSetShader(nullptr, nullptr, 0);
+        }
         if (nrPostUsable && srUsable) {
             // The after-upscaling NR pass needs motion at the output resolution.
             const UINT scaleData[] = {width, height, this->target.width, this->target.height};
@@ -851,7 +866,7 @@ struct NeuralPass::Impl {
                             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             try {
                 superResolution.Dispatch(list.Get(), finalColor, depth.resource.Get(), vectors.resource.Get(),
-                                         scaled.resource.Get(), reset, frameTimeMs);
+                                         scaled.resource.Get(), reset, frameTimeMs, distrust.resource.Get());
                 ngx::Transition(list.Get(), scaled.resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 finalColor = scaled.resource.Get();

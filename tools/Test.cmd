@@ -26,7 +26,7 @@ cl /nologo /std:c++20 /EHsc /W4 /WX /DNOMINMAX tests\PresentationThreadTests.cpp
 if errorlevel 1 exit /b 1
 _bin\tests\PresentationThreadTests.exe
 if errorlevel 1 exit /b 1
-cl /nologo /std:c++20 /EHsc /W4 /WX /DNOMINMAX tests\MotionTests.cpp /Fo_bin\tests\MotionTests.obj /Fe_bin\tests\MotionTests.exe /link d3d11.lib d3dcompiler.lib
+cl /nologo /std:c++20 /EHsc /W4 /WX /DNOMINMAX tests\MotionTests.cpp Source\NeuralRendering\MotionEstimator.cpp /Fo_bin\tests\ /Fe_bin\tests\MotionTests.exe /link d3d11.lib d3dcompiler.lib
 if errorlevel 1 exit /b 1
 _bin\tests\MotionTests.exe
 if errorlevel 1 exit /b 1
