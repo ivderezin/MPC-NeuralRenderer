@@ -44,7 +44,7 @@
    - **Enable neural rendering**, **Intensity** — NR, интенсивность 0–200%.
    - **NR stage** — где выполняется NR при апскейле: **Before upscaling** (на исходном кадре, быстрее всего), **After upscaling** (на увеличенном кадре) или **Before and after** (два прохода). Без апскейла NR всегда выполняется один раз на исходном кадре.
    - **Upscaling** — Off / DLSS SR / FSR 3.1 / XeSS.
-   - **Motion estimation** — **Fast block matching** (по умолчанию) или **EchoStorm coarse-to-fine**. Выбор общий для NR, апскейла и DLSS / FSR / XeSS FG; сохраняется по Apply. EchoStorm добавлен после v0.1.2 — используй актуальную сборку Actions.
+   - **Motion estimation** — **Fast block matching** (по умолчанию) или **EchoStorm coarse-to-fine**. Выбор общий для NR, апскейла и DLSS / FSR / XeSS FG; сохраняется по Apply. EchoStorm доступен начиная с релиза `v0.1.3`.
    - **Frame generation** — DLSS MFG / FSR FG / XeSS FG; **Multiplier** — Off / 2x / 3x / 4x.
    - **Present DLSS / FSR generated frames from a dedicated thread** — показ сгенерированных кадров из отдельного потока с очередью пакетов вместо таймера в UI-потоке плеера. Меньше опозданий и потерянных реальных кадров; задержка — до одного интервала между кадрами.
 6. Нажмите **Apply**. Включите **Show statistics**, чтобы увидеть выбранные режимы, состояние обработки и причину отказа, если функция недоступна.
@@ -68,7 +68,7 @@ FSR 3.1 FG поддерживает **2x**. DLSS и XeSS используют д
 | RTX Video HDR → HDR | Тот же HDR-путь | Тот же HDR-путь | HDR-вывод не поддерживается |
 | HDR → SDR | После встроенного тонмаппинга | SDR-кадр после обработки | Только при 8-битном SDR-выводе |
 
-Работа исправления HDR подтверждена пользователем проекта; Windows-сборка и GPU-регрессии проходят CI. Это подтверждение конкретной проверенной конфигурации, а не всех комбинаций видеокарт, драйверов и HDR-форматов.
+Я проверил релиз `v0.1.3` на своём сетапе: нейрорендеринг, апскейл, генерацию кадров, HDR, пиксельные шейдеры и переключение Fast / EchoStorm. Всё работает. Windows x64 сборка и GPU-регрессии также проходят CI.
 
 При включённой нейрообработке порядок такой: **RGB-преобразование и цветовые коррекции → pre-resize шейдеры → NR до апскейла (если выбран) → апскейл → NR после апскейла (если выбран) → восстановление HDR (при HDR-выводе) → DLSS/FSR FG → масштабирование для вывода, post-resize шейдеры и субтитры**. XeSS FG использует собственный путь презентации. Уже выполненные цветовые коррекции не повторяются при показе готовых кадров.
 
@@ -115,7 +115,7 @@ Pre-resize выполняется после преобразования вид
 1. Установите Visual Studio 2022 с **Desktop development with C++**, MFC, ATL и Windows SDK.
 2. Выполните `powershell -ExecutionPolicy Bypass -File tools/Build.ps1`. Скрипт загрузит закреплённые SDK, проверит SHA-256, соберёт рендерер и скопирует DLL AMD / Intel с лицензиями.
 3. Готовые файлы: `_bin/Filter_x64/`. Для сборки через Visual Studio предварительно выполните `tools/Fetch-NgxSdk.ps1` и `tools/Fetch-VendorSdks.ps1`, затем выберите **Release | x64**.
-4. `tools\Test.cmd` проверяет историю кадров, настройки и миграцию, условия апскейла, расписание генерации, таймер и отдельный поток показа, движение и обрезку кадра, нормализацию 10-битного SDR, HDR-композицию через D3D11 WARP и преобразование цвета через D3D12 WARP. Эти же проверки и Release x64 сборка выполняются в GitHub Actions.
+4. `tools\Test.cmd` проверяет историю кадров, настройки и миграцию, условия апскейла, расписание генерации, таймер и отдельный поток показа, движение и обрезку кадра, EchoStorm (большие и отрицательные сдвиги, неподвижный HUD, сброс истории, нечётные размеры), сохранение выбора алгоритма, нормализацию 10-битного SDR, HDR-композицию через D3D11 WARP и преобразование цвета через D3D12 WARP. Эти же проверки и Release x64 сборка выполняются в GitHub Actions.
 
 `Source/Upscaling` — апскейлеры; `Source/FrameGeneration` — генераторы и вывод; `Source/Processing` — провайдеры, загрузка библиотек и цвет; `Source/NeuralRendering` — NR, история и координация обработки. Всё выполняется в процессе плеера.
 
@@ -163,7 +163,7 @@ The project started from wanting to try neural rendering in Nintendo Switch 2 ga
    - **Enable neural rendering**, **Intensity** — NR with 0–200% intensity.
    - **NR stage** — where NR runs when upscaling: **Before upscaling** (on the source frame, fastest), **After upscaling** (on the upscaled frame), or **Before and after** (two passes). Without upscaling, NR always runs once on the source frame.
    - **Upscaling** — Off / DLSS SR / FSR 3.1 / XeSS.
-   - **Motion estimation** — **Fast block matching** (default) or **EchoStorm coarse-to-fine**. Applies to NR, upscaling, and DLSS / FSR / XeSS FG; saved with Apply. EchoStorm was added after v0.1.2; use a current Actions build.
+   - **Motion estimation** — **Fast block matching** (default) or **EchoStorm coarse-to-fine**. Applies to NR, upscaling, and DLSS / FSR / XeSS FG; saved with Apply. EchoStorm is available starting with release `v0.1.3`.
    - **Frame generation** — DLSS MFG / FSR FG / XeSS FG; **Multiplier** — Off / 2x / 3x / 4x.
    - **Present DLSS / FSR generated frames from a dedicated thread** — presents generated frames from a dedicated thread with a queued schedule instead of a timer on the player's UI thread. Fewer late and dropped real frames, at up to one frame interval of extra latency.
 6. Click **Apply**. Enable **Show statistics** to see the selected modes, processing status, and the reason if a feature is unavailable.
@@ -187,7 +187,7 @@ Frame generation works without upscaling. Seeking, pausing, and resizing reset t
 | RTX Video HDR → HDR | Same HDR path | Same HDR path | HDR output unsupported |
 | HDR → SDR | After built-in tone mapping | Processed SDR frame | Only with 8-bit SDR output |
 
-The project's user has confirmed the HDR fix works; the Windows build and GPU regressions pass CI. This validates the tested configuration, rather than every GPU, driver, and HDR-format combination.
+I tested release `v0.1.3` on my setup: neural rendering, upscaling, frame generation, HDR, pixel shaders, and switching between Fast / EchoStorm. Everything works. The Windows x64 build and GPU regressions also pass CI.
 
 With neural processing enabled, the order is: **RGB conversion and colour correction → pre-resize shaders → pre-upscale NR (if selected) → upscaling → post-upscale NR (if selected) → HDR reconstruction (for HDR output) → DLSS/FSR FG → output resizing, post-resize shaders, and subtitles**. XeSS FG uses its own presentation path. Completed frames do not receive the same colour corrections twice.
 
@@ -234,7 +234,7 @@ This prepares inputs for an external mod; MPC-HC compatibility is unverified. AM
 1. Install Visual Studio 2022 with **Desktop development with C++**, MFC, ATL, and the Windows SDK.
 2. Run `powershell -ExecutionPolicy Bypass -File tools/Build.ps1`. The script downloads pinned SDK files, verifies SHA-256 hashes, builds the renderer, and copies the AMD / Intel DLLs with their licenses.
 3. Build output: `_bin/Filter_x64/`. To build in Visual Studio, first run `tools/Fetch-NgxSdk.ps1` and `tools/Fetch-VendorSdks.ps1`, then select **Release | x64**.
-4. `tools\Test.cmd` checks frame history, settings and migration, upscaling conditions, frame-generation scheduling, the presentation timer and dedicated thread, motion/cropping, 10-bit SDR normalization, HDR compositing through D3D11 WARP, and colour conversion through D3D12 WARP. GitHub Actions runs the same checks and Release x64 build.
+4. `tools\Test.cmd` checks frame history, settings and migration, upscaling conditions, frame-generation scheduling, the presentation timer and dedicated thread, motion/cropping, EchoStorm (large/negative shifts, stationary HUD, history reset, odd dimensions), motion-method settings persistence, 10-bit SDR normalization, HDR compositing through D3D11 WARP, and colour conversion through D3D12 WARP. GitHub Actions runs the same checks and Release x64 build.
 
 `Source/Upscaling` contains upscalers; `Source/FrameGeneration` contains generators and presentation; `Source/Processing` contains provider selection, library loading, and color conversion; `Source/NeuralRendering` contains NR, history, and processing coordination. Everything runs inside the player process.
 
