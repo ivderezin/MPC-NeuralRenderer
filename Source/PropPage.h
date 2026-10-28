@@ -45,6 +45,7 @@ public:
 private:
 	void SetControls();
 	void EnableControls();
+	void EditShaderStage(bool before, bool clear);
 
 	HRESULT OnConnect(IUnknown* pUnknown) override;
 	HRESULT OnDisconnect() override;

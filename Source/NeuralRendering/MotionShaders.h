@@ -1,14 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include <dxgiformat.h>
+#include "../Processing/HdrShaders.h"
 namespace neural {
-inline constexpr char PrepareShader[] = R"(
+// RGB textures sampled by PrepareShader; HDR transfer functions are checked separately by the caller.
+inline constexpr bool IsSdrInputFormat(DXGI_FORMAT format) {
+    return format == DXGI_FORMAT_R8G8B8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+           format == DXGI_FORMAT_R10G10B10A2_UNORM || format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+}
+inline const std::string PrepareShader = std::string(processing::HdrFunctions) + R"(
 Texture2D<float4> source : register(t0);
 RWTexture2D<float4> color : register(u0);
-cbuffer Params : register(b0) { uint2 size; uint2 origin; uint reset; uint3 padding; };
+RWTexture2D<float4> hdrOriginal : register(u1);
+cbuffer Params : register(b0) { uint2 size; uint2 origin; uint reset; uint hdr; uint2 padding; };
 [numthreads(8,8,1)]
 void main(uint3 id : SV_DispatchThreadID) {
     if (any(id.xy >= size)) return;
-    color[id.xy] = float4(source.Load(int3(id.xy + origin, 0)).rgb, 1);
+    float3 rgb=source.Load(int3(id.xy+origin,0)).rgb;
+    if (hdr) {
+        hdrOriginal[id.xy]=float4(rgb,1);
+        float3 light=to709(pqDecode(rgb))/203.0;
+        rgb=srgbEncode(saturate(light/proxyGain(light)));
+    }
+    color[id.xy]=float4(rgb,1);
 }
 )";
 inline constexpr char MotionShader[] = R"(

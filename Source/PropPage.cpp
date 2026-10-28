@@ -23,6 +23,9 @@
 #include "Helper.h"
 #include "DisplayConfig.h"
 #include "PropPage.h"
+#include "FilterInterfaces.h"
+#include <shobjidl.h>
+
 
 void SetCursor(HWND hWnd, LPCWSTR lpCursorName)
 {
@@ -160,6 +163,8 @@ void CVRMainPPage::EnableControls()
 	GetDlgItem(IDC_DLSS_MFG).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_MFG_PRESENT_THREAD).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_AMD_BRIDGE).EnableWindow(neuralAvailable);
+    for (int id : {IDC_SHADER_PRE_ADD, IDC_SHADER_PRE_CLEAR, IDC_SHADER_POST_ADD, IDC_SHADER_POST_CLEAR})
+        GetDlgItem(id).EnableWindow(m_SetsPP.bUseD3D11);
 	GetDlgItem(IDC_NEURAL_INTENSITY).EnableWindow(neuralAvailable && m_neuralSettings.enabled);
 	GetDlgItem(IDC_NR_STAGE).EnableWindow(neuralAvailable && m_neuralSettings.enabled);
 
@@ -411,6 +416,12 @@ INT_PTR CVRMainPPage::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 		int action = HIWORD(wParam);
 
 		if (action == BN_CLICKED) {
+            if (nID == IDC_SHADER_PRE_ADD || nID == IDC_SHADER_PRE_CLEAR ||
+                nID == IDC_SHADER_POST_ADD || nID == IDC_SHADER_POST_CLEAR) {
+                EditShaderStage(nID == IDC_SHADER_PRE_ADD || nID == IDC_SHADER_PRE_CLEAR,
+                    nID == IDC_SHADER_PRE_CLEAR || nID == IDC_SHADER_POST_CLEAR);
+                return (LRESULT)1;
+            }
 			if (nID == IDC_AMD_BRIDGE) {
 				m_neuralSettings.amdBridge = IsDlgButtonChecked(IDC_AMD_BRIDGE) == BST_CHECKED;
 				SetDirty();
@@ -738,6 +749,67 @@ INT_PTR CVRMainPPage::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 
 	// Let the parent class handle the message.
 	return CBasePropertyPage::OnReceiveMessage(hwnd, uMsg, wParam, lParam);
+}
+
+void CVRMainPPage::EditShaderStage(bool before, bool clear)
+{
+    CComQIPtr<IExFilterConfig> config(m_pVideoRenderer);
+    if (!config) return;
+    HRESULT hr = S_OK;
+    if (clear) {
+        hr = config->Flt_SetBool(before ? "cmd_clearPreScaleShaders" : "cmd_clearPostScaleShaders", true);
+    } else {
+        CComPtr<IFileOpenDialog> dialog;
+        hr = dialog.CoCreateInstance(__uuidof(FileOpenDialog));
+        if (FAILED(hr)) return;
+        const COMDLG_FILTERSPEC filter[] = {{L"HLSL pixel shader", L"*.hlsl;*.txt"}};
+        dialog->SetFileTypes(1, filter);
+        dialog->SetOptions(FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST | FOS_FORCEFILESYSTEM | FOS_NOCHANGEDIR);
+        dialog->SetTitle(before ? L"Add pre-resize shader (applies immediately)" : L"Add post-resize shader (applies immediately)");
+        if (FAILED(dialog->Show(m_hWnd))) return;
+        CComPtr<IShellItem> item;
+        hr = dialog->GetResult(&item);
+        if (FAILED(hr)) return;
+        PWSTR path = nullptr;
+        hr = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
+        if (FAILED(hr)) return;
+        const std::wstring name(path);
+        CoTaskMemFree(path);
+        HANDLE file = CreateFileW(name.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) {
+            MessageBoxW(L"Could not read the shader file.", L"Pixel shaders", MB_OK | MB_ICONERROR);
+            return;
+        }
+        LARGE_INTEGER size{};
+        std::string source;
+        DWORD read = 0;
+        if (GetFileSizeEx(file, &size) && size.QuadPart > 0 && size.QuadPart <= 4 * 1024 * 1024) {
+            source.resize(static_cast<size_t>(size.QuadPart));
+            if (!ReadFile(file, source.data(), static_cast<DWORD>(source.size()), &read, nullptr) || read != source.size())
+                source.clear();
+        }
+        CloseHandle(file);
+        if (source.empty()) {
+            MessageBoxW(L"The shader must be a non-empty UTF-8 HLSL file, at most 4 MB.", L"Pixel shaders", MB_OK | MB_ICONERROR);
+            return;
+        }
+        if (source.starts_with("\xEF\xBB\xBF")) source.erase(0, 3);
+        std::vector<BYTE> packet;
+        auto append = [&](uint32_t code, const void* data, uint32_t length) {
+            const auto offset = packet.size();
+            packet.resize(offset + 8 + length);
+            memcpy(packet.data() + offset, &code, 4);
+            memcpy(packet.data() + offset + 4, &length, 4);
+            memcpy(packet.data() + offset + 8, data, length);
+        };
+        append(FCC('NAME'), name.data(), static_cast<uint32_t>(name.size() * sizeof(wchar_t)));
+        append(FCC('CODE'), source.data(), static_cast<uint32_t>(source.size()));
+        hr = config->Flt_SetBin(before ? "cmd_addPreScaleShader" : "cmd_addPostScaleShader", packet.data(), static_cast<int>(packet.size()));
+    }
+    if (FAILED(hr)) {
+        MessageBoxW(L"Could not apply the shader. Open a video first and use standalone HLSL with a main entry point (ps_4_0).",
+            L"Pixel shaders", MB_OK | MB_ICONERROR);
+    } else config->Flt_SetBool("cmd_redraw", true);
 }
 
 HRESULT CVRMainPPage::OnApplyChanges()

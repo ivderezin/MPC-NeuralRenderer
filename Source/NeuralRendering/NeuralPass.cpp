@@ -7,6 +7,7 @@
 #include "../Upscaling/UpscaleStage.h"
 #include "../FrameGeneration/GenerationStage.h"
 #include "../FrameGeneration/GenerationPolicy.h"
+#include "../Processing/HdrComposite.h"
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <d3dcompiler.h>
@@ -238,6 +239,9 @@ struct NeuralPass::Impl {
     std::wstring nrFailure, nrPostFailure, srFailure, fgFailure;
     SharedTexture postOutput, postVectors, postDepth;
     SharedTexture scaled;
+    bool hdr = false;
+    SharedTexture hdrOriginal, hdrOutput;
+    processing::HdrComposite hdrComposite;
     std::array<SharedTexture, 3> generated;
     // Completed output is double buffered by batch serial, so a queued batch stays intact while the
     // next one is collected.
@@ -334,6 +338,7 @@ struct NeuralPass::Impl {
     }
     std::wstring Status() const {
         std::wostringstream message;
+        if (hdr) message << L"HDR: PQ / BT.2020, SDR proxy + linear-light residual, 10-bit output\n";
         if (options.enabled) {
             if (!nrUsable && !nrPostUsable)
                 message << L"NR: " << (nrFailure.empty() ? nrPostFailure : nrFailure);
@@ -393,8 +398,9 @@ struct NeuralPass::Impl {
     }
     void Initialize(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture2D* frame, RECT videoRect,
                     Settings settings, upscaling::Extent targetSize, upscaling::Extent monitorSize,
-                    double displayRefresh) {
+                    double displayRefresh, bool hdrInput) {
         options = settings;
+        hdr = hdrInput;
         target = targetSize;
         monitor = monitorSize;
         refreshHz = displayRefresh;
@@ -468,7 +474,11 @@ struct NeuralPass::Impl {
         desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
         Check(device->CreateTexture2D(&desc, nullptr, &previous), "Create previous frame");
         Check(device->CreateShaderResourceView(previous.Get(), nullptr, &previousView), "Create previous SRV");
-        prepare = Compile(device, PrepareShader);
+        if (hdr) {
+            hdrOriginal.Create(device, device12.Get(), width, height, DXGI_FORMAT_R16G16B16A16_FLOAT);
+            hdrComposite.Create(device12.Get());
+        }
+        prepare = Compile(device, PrepareShader.c_str());
         motion = Compile(device, MotionShader);
         scaleMotion = Compile(device, ScaleMotionShader);
         D3D11_QUERY_DESC preparationQuery{};
@@ -587,6 +597,9 @@ struct NeuralPass::Impl {
                 }
             }
         }
+        if (hdr)
+            hdrOutput.Create(device, device12.Get(), srUsable ? target.width : width,
+                srUsable ? target.height : height, DXGI_FORMAT_R10G10B10A2_UNORM);
         if (options.ManualGeneration()) {
             try {
                 CreateFrameGeneration();
@@ -603,9 +616,9 @@ struct NeuralPass::Impl {
         if (options.frameGenerator == processing::FrameGenerator::Dlss && !coreInitialized)
             throw std::runtime_error("Driver NGX initialization failed");
         frameGeneration.Create(options.frameGenerator, device12.Get(), list.Get(), width, height, outWidth, outHeight,
-                               ModuleDirectory());
+                               ModuleDirectory(), hdr);
         for (unsigned i = 0; i < 3; ++i) {
-            generated[i].Create(device11.Get(), device12.Get(), outWidth, outHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
+            generated[i].Create(device11.Get(), device12.Get(), outWidth, outHeight, hdr ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM);
             for (auto& slot : displayGenerated)
                 DisplayCopy(slot[i], generated[i].texture.Get());
         }
@@ -744,7 +757,7 @@ struct NeuralPass::Impl {
         pendingDuration = static_cast<long long>(frameTimeMs * 10000.0f);
         lastInputTimestamp = timestamp;
         const UINT data[] = {
-            width, height, static_cast<UINT>(rect.left), static_cast<UINT>(rect.top), reset ? 1u : 0u, 0, 0, 0};
+            width, height, static_cast<UINT>(rect.left), static_cast<UINT>(rect.top), reset ? 1u : 0u, hdr ? 1u : 0u, 0, 0};
         context11->OMSetRenderTargets(0, nullptr, nullptr);
         context11->Begin(preparationClock.Get());
         context11->End(preparationStart.Get());
@@ -756,8 +769,11 @@ struct NeuralPass::Impl {
         ID3D11UnorderedAccessView* target[] = {color.uav.Get()};
         context11->CSSetShader(prepare.Get(), nullptr, 0);
         context11->CSSetShaderResources(0, 2, input);
-        context11->CSSetUnorderedAccessViews(0, 1, target, nullptr);
+        ID3D11UnorderedAccessView* preparationTargets[] = {color.uav.Get(), hdr ? hdrOriginal.uav.Get() : nullptr};
+        context11->CSSetUnorderedAccessViews(0, 2, preparationTargets, nullptr);
         context11->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+        preparationTargets[0] = preparationTargets[1] = nullptr;
+        context11->CSSetUnorderedAccessViews(0, 2, preparationTargets, nullptr);
         target[0] = nullptr;
         context11->CSSetUnorderedAccessViews(0, 1, target, nullptr);
         if (reset)
@@ -876,6 +892,25 @@ struct NeuralPass::Impl {
                 }
             }
         }
+        if (hdr) {
+            D3D11_TEXTURE2D_DESC hdrDesc{};
+            hdrOutput.texture->GetDesc(&hdrDesc);
+            const auto hdrWidth = pendingScaled ? this->target.width : width;
+            const auto hdrHeight = pendingScaled ? this->target.height : height;
+            if (hdrDesc.Width != hdrWidth || hdrDesc.Height != hdrHeight)
+                hdrOutput.Create(device11.Get(), device12.Get(), hdrWidth, hdrHeight, DXGI_FORMAT_R10G10B10A2_UNORM);
+            ngx::Transition(list.Get(), hdrOriginal.resource.Get(), D3D12_RESOURCE_STATE_COMMON,
+                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            ngx::Transition(list.Get(), hdrOutput.resource.Get(), D3D12_RESOURCE_STATE_COMMON,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            hdrComposite.Dispatch(list.Get(), finalColor, hdrOriginal.resource.Get(), color.resource.Get(), hdrOutput.resource.Get());
+            ngx::Transition(list.Get(), hdrOutput.resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            ngx::Transition(list.Get(), hdrOriginal.resource.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                D3D12_RESOURCE_STATE_COMMON);
+            finalColor = hdrOutput.resource.Get();
+            pendingReal = hdrOutput.texture.Get();
+        }
         if (fgUsable) {
             const auto count = framegen::GeneratedLimit(options.frameMultiplier, frameGeneration.MaxGenerated(),
                                                         refreshHz, frameTimeMs);
@@ -902,6 +937,9 @@ struct NeuralPass::Impl {
             } else
                 fgNeedsReset = true;
         }
+        if (hdr)
+            ngx::Transition(list.Get(), hdrOutput.resource.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                D3D12_RESOURCE_STATE_COMMON);
         if (pendingScaled)
             ngx::Transition(list.Get(), scaled.resource.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                             D3D12_RESOURCE_STATE_COMMON);
@@ -961,7 +999,7 @@ void NeuralPass::ClearHistory() {
         impl_->Invalidate();
 }
 ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture2D* frame,
-                                     const RECT& rect, long long timestamp, bool sdr, SIZE targetSize, SIZE monitorSize,
+                                     const RECT& rect, long long timestamp, bool hdr, SIZE targetSize, SIZE monitorSize,
                                      double refreshHz, float frameTimeMs) {
     if (!Enabled())
         return nullptr;
@@ -988,12 +1026,10 @@ ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* 
         refreshHz = 60;
     D3D11_TEXTURE2D_DESC desc{};
     frame->GetDesc(&desc);
-    if (!sdr) {
-        Bypass(L"Bypass: SDR source required");
-        return nullptr;
-    }
-    if (desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
-        Bypass(L"Bypass: 8-bit internal format required");
+    // PrepareShader samples normalized RGB and converts it into the 8-bit SDR model input.
+    // Source bit depth is independent of transfer function: 10-bit SDR is valid here.
+    if (!IsSdrInputFormat(desc.Format)) {
+        Bypass(L"Bypass: unsupported RGB internal format");
         return nullptr;
     }
     if (rect.left < 0 || rect.top < 0 || rect.right > static_cast<LONG>(desc.Width) ||
@@ -1007,14 +1043,14 @@ ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* 
             D3D11_TEXTURE2D_DESC old{};
             impl_->source->GetDesc(&old);
             if (impl_->device11.Get() != device || !EqualRect(&impl_->rect, &rect) || old.Width != desc.Width ||
-                old.Height != desc.Height || impl_->sourceFormat != desc.Format || impl_->target != target)
+                old.Height != desc.Height || impl_->sourceFormat != desc.Format || impl_->target != target || impl_->hdr != hdr)
                 impl_.reset();
         }
         if (!impl_) {
             LARGE_INTEGER start{}, end{}, frequency{};
             QueryPerformanceCounter(&start);
             impl_ = std::make_unique<Impl>();
-            impl_->Initialize(device, context, frame, rect, settings_, target, monitor, refreshHz);
+            impl_->Initialize(device, context, frame, rect, settings_, target, monitor, refreshHz, hdr);
             QueryPerformanceCounter(&end);
             QueryPerformanceFrequency(&frequency);
             impl_->initMilliseconds = 1000.0 * static_cast<double>(end.QuadPart - start.QuadPart) / frequency.QuadPart;
