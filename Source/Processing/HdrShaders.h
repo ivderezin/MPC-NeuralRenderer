@@ -43,16 +43,18 @@ RWTexture2D<float4> result : register(u0);
     if (id.x>=w || id.y>=h) return;
     float2 p=(float2(id.xy)+.5)*float2(sw,sh)/float2(w,h)-.5;
     int2 base=int2(floor(p)); float2 f=frac(p);
-    float3 light=0,baseline=0;
+    float3 light=0,baseline=0,original2020=0;
     [unroll] for (int y=0;y<2;++y) [unroll] for (int x=0;x<2;++x) {
         int2 at=clamp(base+int2(x,y),int2(0,0),int2(sw,sh)-1);
         float weight=(x ? f.x : 1-f.x)*(y ? f.y : 1-f.y);
-        light+=weight*to709(pqDecode(hdrOriginal.Load(int3(at,0)).rgb))/203.0;
+        float3 nits=pqDecode(hdrOriginal.Load(int3(at,0)).rgb);
+        original2020+=weight*nits;
+        light+=weight*to709(nits)/203.0;
         baseline+=weight*srgbDecode(proxyOriginal.Load(int3(at,0)).rgb);
     }
     float3 delta=clamp(srgbDecode(enhanced.Load(int3(id.xy,0)).rgb)-baseline,-.25,.25);
-    float3 restored=light+proxyGain(light)*delta;
-    result[id.xy]=float4(pqEncode(max(to2020(restored)*203.0,0)),1);
+    float3 restored=original2020+to2020(proxyGain(light)*delta)*203.0;
+    result[id.xy]=float4(pqEncode(max(restored,0)),1);
 }
 )";
 }
