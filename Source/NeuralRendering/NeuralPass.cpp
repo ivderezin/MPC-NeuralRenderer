@@ -765,7 +765,7 @@ struct NeuralPass::Impl {
         context11->CSSetShader(nullptr, nullptr, 0);
         if (nrPostUsable && srUsable) {
             // The after-upscaling NR pass needs motion at the output resolution.
-            const UINT scaleData[] = {width, height, target.width, target.height};
+            const UINT scaleData[] = {width, height, this->target.width, this->target.height};
             context11->UpdateSubresource(scaleConstants.Get(), 0, nullptr, scaleData, 0, 0);
             ID3D11Buffer* scaleBuffer[] = {scaleConstants.Get()};
             ID3D11ShaderResourceView* scaleInput[] = {vectors.srv.Get()};
@@ -774,7 +774,7 @@ struct NeuralPass::Impl {
             context11->CSSetShader(scaleMotion.Get(), nullptr, 0);
             context11->CSSetShaderResources(0, 1, scaleInput);
             context11->CSSetUnorderedAccessViews(0, 1, scaleOutput, nullptr);
-            context11->Dispatch((target.width + 7) / 8, (target.height + 7) / 8, 1);
+            context11->Dispatch((this->target.width + 7) / 8, (this->target.height + 7) / 8, 1);
             scaleBuffer[0] = nullptr;
             scaleInput[0] = nullptr;
             scaleOutput[0] = nullptr;
