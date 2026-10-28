@@ -183,6 +183,24 @@ int main() {
         gpu.Dispatch(prepare.Get(),hdr10,nullptr,readable,1,1,0);
         const auto actualHdr=gpu.Read(readable,4);
         Require(std::abs(actualHdr[0]-pq(1000))<=1.0f/1023,"HDR MFG input must retain 1000-nit PQ at 10-bit precision");
+        gpu.Dispatch(prepare.Get(),normalized,nullptr,readable,1,1,0);
+        const auto proxyPixel=gpu.Read(readable,4);
+        std::array<float,16> enlargedProxy{};
+        for (unsigned pixel=0;pixel<4;++pixel)
+            std::copy(proxyPixel.begin(),proxyPixel.end(),enlargedProxy.begin()+pixel*4);
+        auto enlarged=gpu.Texture(2,2,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,enlargedProxy.data(),32);
+        auto hdrScaled=gpu.Texture(2,2,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+        gpu.Dispatch(composite.Get(),enlarged,&raw,hdrScaled,2,2,0,0,0,false,nullptr,&normalized);
+        const auto scaledHdr=gpu.Read(hdrScaled,4);
+        for (unsigned pixel=0;pixel<4;++pixel)
+            Require(std::abs(scaledHdr[pixel*4]-pq(1000))<.0001f,"HDR reconstruction must preserve highlights after upscaling");
+        for (unsigned pixel=0;pixel<4;++pixel)
+            for (unsigned channel=0;channel<3;++channel) enlargedProxy[pixel*4+channel]+=.01f;
+        auto edited=gpu.Texture(2,2,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,enlargedProxy.data(),32);
+        gpu.Dispatch(composite.Get(),edited,&raw,hdrScaled,2,2,0,0,0,false,nullptr,&normalized);
+        const auto editedHdr=gpu.Read(hdrScaled,4);
+        Require(editedHdr[0]>pq(1000) && editedHdr[0]<1 && std::isfinite(editedHdr[0]),
+                "Model edits must be transferred to HDR as a finite linear-light residual");
         // After-upscaling NR: 8x8 source motion resampled to 16x16, scaled by the 2x ratio.
         std::vector<float> lowMotion(8*8*2);
         for (UINT i=0;i<8*8;++i) { lowMotion[i*2]=static_cast<float>(i%8); lowMotion[i*2+1]=-static_cast<float>(i/8); }

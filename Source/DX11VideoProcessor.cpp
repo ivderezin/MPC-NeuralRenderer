@@ -3936,13 +3936,14 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
     }
     if (!m_pPreScaleShaders.empty()) {
         const CRect rect(0, 0, rSrc.Width(), rSrc.Height());
-        const PS_EXTSHADER_CONSTANTS constants = {
-            {1.0f / pInputTexture->desc.Width, 1.0f / pInputTexture->desc.Height},
-            {static_cast<float>(pInputTexture->desc.Width), static_cast<float>(pInputTexture->desc.Height)},
-            m_preShaderFrame++, static_cast<float>(GetTickCount64() % 600000) / 1000.0f, 0, 0
-        };
-        m_pDeviceContext->UpdateSubresource(m_pPostScaleConstants, 0, nullptr, &constants, 0, 0);
+        const auto frame = m_preShaderFrame++;
         for (size_t index = 0; index < m_pPreScaleShaders.size(); ++index) {
+            const PS_EXTSHADER_CONSTANTS constants = {
+                {1.0f / pInputTexture->desc.Width, 1.0f / pInputTexture->desc.Height},
+                {static_cast<float>(pInputTexture->desc.Width), static_cast<float>(pInputTexture->desc.Height)},
+                frame, static_cast<float>(GetTickCount64() % 600000) / 1000.0f, 0, 0
+            };
+            m_pDeviceContext->UpdateSubresource(m_pPostScaleConstants, 0, nullptr, &constants, 0, 0);
             auto& target = m_TexPreScale[index % 2];
             hr = target.CheckCreate(m_pDevice, m_InternalTexFmt, rect.Width(), rect.Height(), Tex2D_DefaultShaderRTarget);
             if (FAILED(hr)) return hr;
