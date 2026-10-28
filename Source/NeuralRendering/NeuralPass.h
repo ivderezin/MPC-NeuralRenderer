@@ -28,6 +28,6 @@ public:
     const std::wstring& Status() const { return status_; }
     // Returned texture is owned by this pass and remains valid until reset or resize.
     ID3D11Texture2D* Process(ID3D11Device* device, ID3D11DeviceContext* context,
-        ID3D11Texture2D* frame, const RECT& videoRect, long long timestamp, bool sdr, SIZE targetSize, SIZE monitorSize, double refreshHz, float frameTimeMs);
+        ID3D11Texture2D* frame, const RECT& videoRect, long long timestamp, bool hdr, SIZE targetSize, SIZE monitorSize, double refreshHz, float frameTimeMs);
 };
 }

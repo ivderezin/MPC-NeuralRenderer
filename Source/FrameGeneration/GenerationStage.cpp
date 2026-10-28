@@ -12,7 +12,7 @@ struct GenerationStage::Impl {
     ffxContext context = nullptr;
     unsigned width = 0, height = 0, outputWidth = 0, outputHeight = 0;
     uint64_t frameId = 0;
-    bool pendingReset = true;
+    bool pendingReset = true, hdr = false;
     ~Impl() {
         if (context)
             fsr.destroy(&context, nullptr);
@@ -25,16 +25,17 @@ void GenerationStage::Reset() {
 }
 void GenerationStage::Create(processing::FrameGenerator provider, ID3D12Device* device, ID3D12GraphicsCommandList* list,
                              unsigned width, unsigned height, unsigned outWidth, unsigned outHeight,
-                             const std::filesystem::path& directory) {
+                             const std::filesystem::path& directory, bool hdr) {
     impl_ = std::make_unique<Impl>();
     auto& p = *impl_;
     p.provider = provider;
+    p.hdr = hdr;
     p.width = width;
     p.height = height;
     p.outputWidth = outWidth;
     p.outputHeight = outHeight;
     if (provider == processing::FrameGenerator::Dlss) {
-        p.dlss.Create(device, list, width, height, outWidth, outHeight);
+        p.dlss.Create(device, list, width, height, outWidth, outHeight, hdr);
         return;
     }
     if (provider != processing::FrameGenerator::Fsr)
@@ -42,10 +43,10 @@ void GenerationStage::Create(processing::FrameGenerator provider, ID3D12Device* 
     p.fsr.Load(directory / L"amd_fidelityfx_framegeneration_dx12.dll");
     ffxCreateContextDescFrameGeneration create{};
     create.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION;
-    create.flags = FFX_FRAMEGENERATION_ENABLE_DEPTH_INVERTED;
+    create.flags = FFX_FRAMEGENERATION_ENABLE_DEPTH_INVERTED | (hdr ? FFX_FRAMEGENERATION_ENABLE_HIGH_DYNAMIC_RANGE : 0);
     create.displaySize = {outWidth, outHeight};
     create.maxRenderSize = {width, height};
-    create.backBufferFormat = FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM;
+    create.backBufferFormat = hdr ? FFX_API_SURFACE_FORMAT_R10G10B10A2_UNORM : FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM;
     ffxCreateBackendDX12Desc backend{};
     backend.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12;
     backend.device = device;
@@ -105,8 +106,8 @@ void GenerationStage::Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* 
     generate.numGeneratedFrames = 1;
     generate.reset = reset;
     generate.generationRect = config.generationRect;
-    generate.backbufferTransferFunction = FFX_API_BACKBUFFER_TRANSFER_FUNCTION_SRGB;
-    generate.minMaxLuminance[1] = 80;
+    generate.backbufferTransferFunction = p.hdr ? FFX_API_BACKBUFFER_TRANSFER_FUNCTION_PQ : FFX_API_BACKBUFFER_TRANSFER_FUNCTION_SRGB;
+    generate.minMaxLuminance[1] = p.hdr ? 10000.0f : 80.0f;
     processing::FsrApi::Check(p.fsr.dispatch(&p.context, &generate.header), "Dispatch FSR frame generation");
 }
 unsigned GenerationStage::Collect() {

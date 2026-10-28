@@ -695,6 +695,7 @@ void CDX11VideoProcessor::ReleaseVP()
 	m_TexResize.Release();
 	m_TexsPostScale.Release();
 	for (auto& texture : m_TexPreScale) texture.Release();
+	for (auto& texture : m_TexNeuralColour) texture.Release();
 
 	m_PSConvColorData.Release();
 	m_pDoviCurvesConstantBuffer.Release();
@@ -3895,9 +3896,7 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 	// Neural rendering runs on the source-resolution frame, so D3D11 VP must not scale directly to the target.
 	const bool bNeural = NeuralActive();
 	if (!m_processingSuspended && m_neuralPass.Enabled() && !bNeural) {
-        m_neuralPass.Bypass(m_pPSHalfOUtoInterlace ? L"Bypass: stereo conversion unsupported"
-            : m_bVPUseRTXVideoHDR ? L"Bypass: RTX Video HDR neural processing unsupported"
-            : L"Bypass: HDR neural processing unsupported (SDR input required)");
+        m_neuralPass.Bypass(L"Bypass: stereo conversion unsupported");
 	}
 
 	if (m_D3D11VP.IsReady()) {
@@ -3929,6 +3928,12 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 		pInputTexture = &m_TexSrcVideo;
 	}
 
+    m_pipelineColorCorrected = false;
+    if (bNeural) {
+        hr = PrepareNeuralColour(pInputTexture, rSrc);
+        if (FAILED(hr)) return hr;
+        m_pipelineColorCorrected = true;
+    }
     if (!m_pPreScaleShaders.empty()) {
         const CRect rect(0, 0, rSrc.Width(), rSrc.Height());
         const PS_EXTSHADER_CONSTANTS constants = {
@@ -3950,7 +3955,7 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
     }
 
 	if (bNeural) {
-		if (auto* texture = m_neuralPass.Process(m_pDevice, m_pDeviceContext, pInputTexture->pTexture, rSrc, m_neuralFrameTimestamp, true,
+		if (auto* texture = m_neuralPass.Process(m_pDevice, m_pDeviceContext, pInputTexture->pTexture, rSrc, m_neuralFrameTimestamp, m_pDXGISwapChain4 != nullptr,
 			dstRect.Size(), m_neuralMonitorSize, m_neuralRefreshHz,
 			static_cast<float>(m_rtAvgTimePerFrame > 0 ? m_rtAvgTimePerFrame : 166667) / 10000.0f)) {
 			if (m_TexNeural.pTexture != texture) {
@@ -3971,11 +3976,38 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 	return DrawProcessedTexture(*pInputTexture,pRenderTarget,rSrc,dstRect,rotation);
 }
 
+HRESULT CDX11VideoProcessor::PrepareNeuralColour(Tex2D_t*& input, CRect& rect)
+{
+    unsigned index = 0;
+    auto apply = [&](ID3D11PixelShader* shader, ID3D11Buffer* constants, bool measure) -> HRESULT {
+        if (!shader) return S_OK;
+        auto& target = m_TexNeuralColour[index++];
+        HRESULT hr = target.CheckCreate(m_pDevice, m_InternalTexFmt, rect.Width(), rect.Height(), Tex2D_DefaultShaderRTarget);
+        if (FAILED(hr)) return hr;
+        const bool measured = measure && MeasureHdrPeak(*input, rect) == S_OK;
+        if (measured) m_pDeviceContext->PSSetShaderResources(1, 1, &m_pHdrStateSRV.p);
+        const CRect output(0, 0, rect.Width(), rect.Height());
+        hr = TextureCopyRect(*input, target.pTexture, rect, output, shader, constants, 0, false);
+        if (measured) {
+            ID3D11ShaderResourceView* empty = nullptr;
+            m_pDeviceContext->PSSetShaderResources(1, 1, &empty);
+            ReadHdrMeasureStats();
+        }
+        if (SUCCEEDED(hr)) { input = &target; rect = output; }
+        return hr;
+    };
+    HRESULT hr = apply(m_pPSCorrection, m_pCorrectionConstants, m_bSdrMeasureActive);
+    if (FAILED(hr)) return hr;
+    if (m_pDoViDynamicConstants) m_pDeviceContext->PSSetConstantBuffers(1, 1, &m_pDoViDynamicConstants.p);
+    return apply(m_pPSHDR10ToneMapping, m_pHDR10ToneMappingConstants, m_bHdrLocalMeasureActive);
+}
+
 HRESULT CDX11VideoProcessor::DrawProcessedTexture(Tex2D_t& input, ID3D11Texture2D* pRenderTarget, CRect rSrc, CRect dstRect, int rotation)
 {
 	HRESULT hr = S_OK;
 	Tex2D_t* pInputTexture = &input;
-	const auto numSteps = GetPostScaleSteps();
+    const auto numSteps = GetPostScaleSteps() - (m_pipelineColorCorrected ?
+        static_cast<UINT>((m_pPSCorrection ? 1 : 0) + (m_pPSHDR10ToneMapping ? 1 : 0)) : 0);
 	if (numSteps) {
 		UINT step = 0;
 		Tex2D_t* pTex = m_TexsPostScale.GetFirstTex();
@@ -4005,7 +4037,7 @@ HRESULT CDX11VideoProcessor::DrawProcessedTexture(Tex2D_t& input, ID3D11Texture2
 			pTex = pInputTexture; // Hmm
 		}
 
-		if (m_pPSCorrection) {
+		if (!m_pipelineColorCorrected && m_pPSCorrection) {
 			StepSetting();
 			const bool bMeasured = m_bSdrMeasureActive && MeasureHdrPeak(*pInputTexture, rect) == S_OK;
 			if (bMeasured) {
@@ -4019,7 +4051,7 @@ HRESULT CDX11VideoProcessor::DrawProcessedTexture(Tex2D_t& input, ID3D11Texture2
 			}
 		}
 
-		if (m_pPSHDR10ToneMapping) {
+		if (!m_pipelineColorCorrected && m_pPSHDR10ToneMapping) {
 			StepSetting();
 
 			if (m_pDoViDynamicConstants) {
@@ -4810,6 +4842,7 @@ void CDX11VideoProcessor::ClearPreScaleShaders()
 	}
 	m_pPreScaleShaders.clear();
 	for (auto& texture : m_TexPreScale) texture.Release();
+	for (auto& texture : m_TexNeuralColour) texture.Release();
 	m_neuralPass.ClearHistory();
 	DLog(L"CDX11VideoProcessor::ClearPreScaleShaders().");
 }

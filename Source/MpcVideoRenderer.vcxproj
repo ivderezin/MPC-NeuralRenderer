@@ -81,6 +81,8 @@
     <ClInclude Include="Processing\ResourceBarrier.h" />
     <ClInclude Include="Processing\FsrApi.h" />
     <ClInclude Include="Processing\ColourTransfer.h" />
+    <ClInclude Include="Processing\HdrShaders.h" />
+    <ClInclude Include="Processing\HdrComposite.h" />
     <ClCompile Include="Processing\ColourTransfer.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClInclude Include="Upscaling\UpscaleStage.h" />
     <ClCompile Include="Upscaling\UpscaleStage.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>

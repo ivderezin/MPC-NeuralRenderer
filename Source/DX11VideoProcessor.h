@@ -75,7 +75,7 @@ private:
 	void StopMfgPresentation();
 	REFERENCE_TIME m_neuralFrameTimestamp = 0;
 	Tex2D_t m_TexNeural; // view of the latest completed NR frame, owned by m_neuralPass
-	bool NeuralSourceSupported() { return !SourceIsHDR() && !m_bVPUseRTXVideoHDR && !m_pPSHalfOUtoInterlace; }
+	bool NeuralSourceSupported() { return !m_pPSHalfOUtoInterlace; }
 	bool NeuralActive() { return !m_processingSuspended && m_neuralPass.Enabled() && NeuralSourceSupported(); }
 	processing::Upscaler m_lastUpscaler = processing::Upscaler::Dlss;
 	unsigned m_lastFrameMultiplier = 2;
@@ -113,6 +113,9 @@ private:
 	CTex2DRing m_TexsPostScale;
 	Tex2D_t m_TexPreScale[2]; // Source-sized ping-pong targets for external pre-resize shaders
 	uint32_t m_preShaderFrame = 0;
+	Tex2D_t m_TexNeuralColour[2];
+	bool m_pipelineColorCorrected = false;
+	HRESULT PrepareNeuralColour(Tex2D_t*& input, CRect& rect);
 	Tex2D_t m_TexDither;
 
 	// for GetAlignmentSize()

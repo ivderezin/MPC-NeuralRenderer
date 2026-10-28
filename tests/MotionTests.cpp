@@ -50,20 +50,20 @@ struct Gpu {
         Check(device->CreateComputeShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, &shader));
         return shader;
     }
-    void Dispatch(ID3D11ComputeShader* shader, Image& source, Image* previous, Image& target, UINT width, UINT height, UINT reset, UINT x=0, UINT y=0) {
-        UINT data[] = {width,height,x,y,reset,0,0,0};
+    void Dispatch(ID3D11ComputeShader* shader, Image& source, Image* previous, Image& target, UINT width, UINT height, UINT reset, UINT x=0, UINT y=0, bool hdr=false, Image* secondOutput=nullptr, Image* thirdInput=nullptr) {
+        UINT data[] = {width,height,x,y,reset,hdr ? 1u : 0u,0,0};
         context->UpdateSubresource(constants.Get(),0,nullptr,data,0,0);
         ID3D11Buffer* buffers[] = {constants.Get()};
-        ID3D11ShaderResourceView* views[] = {source.srv.Get(), previous ? previous->srv.Get() : nullptr};
-        ID3D11UnorderedAccessView* uavs[] = {target.uav.Get()};
+        ID3D11ShaderResourceView* views[] = {source.srv.Get(), previous ? previous->srv.Get() : nullptr, thirdInput ? thirdInput->srv.Get() : nullptr};
+        ID3D11UnorderedAccessView* uavs[] = {target.uav.Get(), secondOutput ? secondOutput->uav.Get() : nullptr};
         context->CSSetConstantBuffers(0,1,buffers);
-        context->CSSetShaderResources(0,2,views);
-        context->CSSetUnorderedAccessViews(0,1,uavs,nullptr);
+        context->CSSetShaderResources(0,3,views);
+        context->CSSetUnorderedAccessViews(0,2,uavs,nullptr);
         context->CSSetShader(shader,nullptr,0);
         context->Dispatch((width+7)/8,(height+7)/8,1);
-        views[0]=views[1]=nullptr; uavs[0]=nullptr;
-        context->CSSetShaderResources(0,2,views);
-        context->CSSetUnorderedAccessViews(0,1,uavs,nullptr);
+        views[0]=views[1]=views[2]=nullptr; uavs[0]=uavs[1]=nullptr;
+        context->CSSetShaderResources(0,3,views);
+        context->CSSetUnorderedAccessViews(0,2,uavs,nullptr);
     }
     std::vector<float> Read(Image& image, UINT components) {
         D3D11_TEXTURE2D_DESC desc{}; image.texture->GetDesc(&desc);
@@ -133,7 +133,7 @@ int main() {
         pixels=gpu.Read(oddMotion,2);
         for (float value:pixels) Require(value==0,"Flat regions and partial workgroups must produce zero motion");
         auto crop=gpu.Texture(13,11,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
-        auto prepare=gpu.Compile(neural::PrepareShader);
+        auto prepare=gpu.Compile(neural::PrepareShader.c_str());
         gpu.Dispatch(prepare.Get(),previous,nullptr,crop,13,11,0,5,7);
         pixels=gpu.Read(crop,4);
         for (UINT y=0;y<11;++y) for (UINT x=0;x<13;++x)
@@ -155,6 +155,34 @@ int main() {
             Require(std::abs(rgb[0]-.5f)<=1.0f/255 && std::abs(rgb[1]-.25f)<=1.0f/255 && rgb[2]==1 && rgb[3]==1,
                     "10-bit and float16 SDR must normalize to the model input without changing RGB order");
         }
+        // The HDR proxy/residual round trip must preserve absolute highlights and wide-gamut colours.
+        auto composite = gpu.Compile(processing::HdrCompositeShader.c_str());
+        auto pq = [](float nits) {
+            const double value=std::pow(static_cast<double>(nits)/10000.0,.1593017578125);
+            return static_cast<float>(std::pow((.8359375+18.8515625*value)/(1+18.6875*value),78.84375));
+        };
+        for (const auto light : {std::array<float,3>{0,0,0}, {203,203,203}, {1000,1000,1000},
+                                {10000,10000,10000}, {1000,0,0}, {0,1000,0}, {0,0,1000}}) {
+            const std::array<float,4> encoded={pq(light[0]),pq(light[1]),pq(light[2]),1};
+            auto hdrInput=gpu.Texture(1,1,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,encoded.data(),16);
+            auto original=gpu.Texture(1,1,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS);
+            gpu.Dispatch(prepare.Get(),hdrInput,nullptr,normalized,1,1,0,0,0,true,&original);
+            gpu.Dispatch(composite.Get(),normalized,&original,readable,1,1,0,0,0,false,nullptr,&normalized);
+            const auto restored=gpu.Read(readable,4);
+            for (unsigned channel=0;channel<3;++channel)
+                Require(std::isfinite(restored[channel]) && std::abs(restored[channel]-encoded[channel])<.0001f,
+                        "An unchanged SDR proxy must preserve HDR black, white, highlights and BT.2020 primaries");
+        }
+        // R10G10B10A2 is the HDR composite/MFG output, not the 8-bit model proxy.
+        auto hdr10=gpu.Texture(1,1,DXGI_FORMAT_R10G10B10A2_UNORM,D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS);
+        const std::array<float,4> hdrGrey={pq(1000),pq(1000),pq(1000),1};
+        auto hdrSource=gpu.Texture(1,1,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,hdrGrey.data(),16);
+        auto raw=gpu.Texture(1,1,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS);
+        gpu.Dispatch(prepare.Get(),hdrSource,nullptr,normalized,1,1,0,0,0,true,&raw);
+        gpu.Dispatch(composite.Get(),normalized,&raw,hdr10,1,1,0,0,0,false,nullptr,&normalized);
+        gpu.Dispatch(prepare.Get(),hdr10,nullptr,readable,1,1,0);
+        const auto actualHdr=gpu.Read(readable,4);
+        Require(std::abs(actualHdr[0]-pq(1000))<=1.0f/1023,"HDR MFG input must retain 1000-nit PQ at 10-bit precision");
         // After-upscaling NR: 8x8 source motion resampled to 16x16, scaled by the 2x ratio.
         std::vector<float> lowMotion(8*8*2);
         for (UINT i=0;i<8*8;++i) { lowMotion[i*2]=static_cast<float>(i%8); lowMotion[i*2+1]=-static_cast<float>(i/8); }

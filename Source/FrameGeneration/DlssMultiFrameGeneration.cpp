@@ -20,8 +20,9 @@ Microsoft::WRL::ComPtr<ID3D12Resource> Buffer(ID3D12Device* device, D3D12_HEAP_T
 }
 }
 void DlssMultiFrameGeneration::Create(ID3D12Device* device, ID3D12GraphicsCommandList* list,
-    unsigned inputWidth, unsigned inputHeight, unsigned outputWidth, unsigned outputHeight) {
+    unsigned inputWidth, unsigned inputHeight, unsigned outputWidth, unsigned outputHeight, bool hdr) {
     Allocate();
+    hdr_ = hdr;
     frameId_ = 0; pendingCount_ = 0; pendingReset_ = true;
     inputWidth_ = inputWidth; inputHeight_ = inputHeight;
     outputWidth_ = outputWidth; outputHeight_ = outputHeight;
@@ -33,7 +34,7 @@ void DlssMultiFrameGeneration::Create(ID3D12Device* device, ID3D12GraphicsComman
     NVSDK_NGX_DLSSG_Create_Params create{};
     create.Width = outputWidth; create.Height = outputHeight;
     create.RenderWidth = inputWidth; create.RenderHeight = inputHeight;
-    create.NativeBackbufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+    create.NativeBackbufferFormat = hdr ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
     ngx::Check(NGX_D3D12_CREATE_DLSSG(list, 1, 1, &handle_, params_, &create), "Create DLSS MFG");
     if (!handle_) throw std::runtime_error("DLSS MFG returned no handle");
     maximum = maxGenerated_;
@@ -55,6 +56,7 @@ NVSDK_NGX_Result DlssMultiFrameGeneration::Evaluate(ID3D12GraphicsCommandList* l
     params_->Set(NVSDK_NGX_DLSSG_Parameter_BackbufferFrameID, ++frameId_);
     NVSDK_NGX_DLSSG_Opt_Eval_Params options{};
     options.multiFrameCount = count;
+    options.colorBuffersHDR = hdr_;
     options.mvecScale[0] = 1.0f / inputWidth_; options.mvecScale[1] = 1.0f / inputHeight_;
     options.cameraUp[1] = options.cameraRight[0] = options.cameraFwd[2] = 1;
     options.cameraNear = 0.1f; options.cameraFar = 1000; options.cameraFOV = 1.04719755f;
