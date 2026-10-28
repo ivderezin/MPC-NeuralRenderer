@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../Source/Processing/ColourTransfer.h"
+#include "../Source/Upscaling/MotionAdaptive.h"
 #include "../Source/Processing/ResourceBarrier.h"
 #include "../Source/Processing/RuntimeLibrary.h"
 #include <dxgi1_4.h>
@@ -40,6 +41,8 @@ int main() {
         CheckHr(factory->EnumWarpAdapter(IID_PPV_ARGS(&warp)), "Get WARP adapter");
         CheckHr(D3D12CreateDevice(warp.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)),
                 "Create WARP D3D12 device");
+        upscaling::MotionAdaptive adaptive;
+        adaptive.Create(device.Get()); // Validate the D3D12 shader/root signature on WARP.
         D3D12_HEAP_PROPERTIES heap{};
         heap.Type = D3D12_HEAP_TYPE_DEFAULT;
         heap.CreationNodeMask = heap.VisibleNodeMask = 1;

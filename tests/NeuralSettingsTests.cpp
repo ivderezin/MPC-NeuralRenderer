@@ -44,7 +44,7 @@ int main() {
         using processing::FrameGenerator;
         using processing::Upscaler;
         auto settings = neural::Settings::Load();
-        Require(settings.upscaler == Upscaler::Dlss && settings.frameMultiplier == 1 && settings.presentThread && settings.motionMethod == neural::MotionMethod::Fast,
+        Require(settings.upscaler == Upscaler::Dlss && settings.frameMultiplier == 1 && settings.presentThread && settings.motionMethod == neural::MotionMethod::EchoStorm,
                 "Defaults changed");
         registry.Write(L"DlssUpscaling", 0);
         Require(neural::Settings::Load().upscaler == Upscaler::Off, "Legacy disabled SR must migrate");
@@ -66,7 +66,7 @@ int main() {
             }
         Require(settings.FsrNative() == (settings.upscaler == Upscaler::Fsr && settings.amdBridge), "Bridge must require FSR");
         registry.Write(L"MotionMethod", 99);
-        Require(neural::Settings::Load().motionMethod == neural::MotionMethod::Fast, "Unknown motion method must fall back to fast");
+        Require(neural::Settings::Load().motionMethod == neural::MotionMethod::EchoStorm, "Unknown motion method must fall back to EchoStorm");
         registry.Write(L"Upscaler", 99);
         registry.Write(L"FrameGenerator", 99);
         registry.Write(L"FrameMultiplier", 99);

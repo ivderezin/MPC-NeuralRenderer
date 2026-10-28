@@ -3,6 +3,7 @@
 #include "UpscaleStage.h"
 #include <exception>
 #include "DlssSuperResolution.h"
+#include "MotionAdaptive.h"
 #include "../Processing/FsrApi.h"
 #include "../Processing/ColourTransfer.h"
 #include "../Processing/ResourceBarrier.h"
@@ -23,6 +24,9 @@ struct UpscaleStage::Impl {
     processing::ColourTransfer transfer;
     Microsoft::WRL::ComPtr<ID3D12Resource> inputLinear, outputLinear;
     Extent source{}, target{};
+    bool motionConfidence = false;
+    MotionAdaptive adaptive;
+    Microsoft::WRL::ComPtr<ID3D12Resource> upscaled;
     ~Impl() {
         if (fsrContext)
             fsr.destroy(&fsrContext, nullptr);
@@ -31,6 +35,20 @@ struct UpscaleStage::Impl {
     }
     void Create(ID3D12Device* device, ID3D12GraphicsCommandList* list, const std::filesystem::path& directory) {
         using namespace processing;
+        if (motionConfidence) {
+            adaptive.Create(device);
+            D3D12_HEAP_PROPERTIES heap{};
+            heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+            heap.CreationNodeMask = heap.VisibleNodeMask = 1;
+            D3D12_RESOURCE_DESC desc{};
+            desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+            desc.Width = target.width; desc.Height = target.height;
+            desc.DepthOrArraySize = desc.MipLevels = desc.SampleDesc.Count = 1;
+            desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+            CheckHr(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&upscaled)), "Create motion-adaptive SR texture");
+        }
         if (provider == Upscaler::Dlss) {
             dlss.Create(list, source, target);
             return;
@@ -89,7 +107,8 @@ struct UpscaleStage::Impl {
             }
             if (best == (std::numeric_limits<double>::max)())
                 throw std::runtime_error("XeSS does not support the source/target size pair");
-            create.initFlags = XESS_INIT_FLAG_INVERTED_DEPTH | XESS_INIT_FLAG_ENABLE_AUTOEXPOSURE;
+            create.initFlags = XESS_INIT_FLAG_INVERTED_DEPTH | XESS_INIT_FLAG_ENABLE_AUTOEXPOSURE |
+                (motionConfidence ? XESS_INIT_FLAG_RESPONSIVE_PIXEL_MASK : 0);
             create.creationNodeMask = create.visibleNodeMask = 1;
             CheckIntel(xess.Get<decltype(&xessD3D12Init)>("xessD3D12Init")(xessContext, &create), "Initialize XeSS");
             CheckIntel(xess.Get<decltype(&xessSetVelocityScale)>("xessSetVelocityScale")(xessContext, 1, 1),
@@ -100,8 +119,21 @@ struct UpscaleStage::Impl {
     void Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motion,
                   ID3D12Resource* output, bool reset, float frameTimeMs, ID3D12Resource* distrust) {
         using namespace processing;
+        ID3D12Resource* providerOutput = output;
+        if (motionConfidence) {
+            if (!distrust) throw std::invalid_argument("Motion-adaptive SR requires a distrust mask");
+            providerOutput = upscaled.Get();
+            Transition(list, providerOutput, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        }
         if (provider == Upscaler::Dlss) {
-            ngx::Check(dlss.Evaluate(list, color, depth, motion, output, reset, frameTimeMs, distrust), "Evaluate DLSS SR");
+            const auto result = dlss.Evaluate(list, color, depth, motion, providerOutput, reset, frameTimeMs, distrust);
+            if (motionConfidence) {
+                Transition(list, providerOutput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                if (result == NVSDK_NGX_Result_Success) adaptive.Dispatch(list, providerOutput, color, distrust, output);
+                Transition(list, providerOutput, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON);
+            }
+            ngx::Check(result, "Evaluate DLSS SR");
             return;
         }
         Transition(list, inputLinear.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -119,6 +151,7 @@ struct UpscaleStage::Impl {
                 desc.color = ffxApiGetResourceDX12(inputLinear.Get());
                 desc.depth = ffxApiGetResourceDX12(depth);
                 desc.motionVectors = ffxApiGetResourceDX12(motion);
+                desc.reactive = ffxApiGetResourceDX12(distrust);
                 desc.output = ffxApiGetResourceDX12(outputLinear.Get(), FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
                 desc.renderSize = {source.width, source.height};
                 desc.upscaleSize = {target.width, target.height};
@@ -137,6 +170,7 @@ struct UpscaleStage::Impl {
                 desc.pOutputTexture = outputLinear.Get();
                 desc.pDepthTexture = depth;
                 desc.pVelocityTexture = motion;
+                desc.pResponsivePixelMaskTexture = distrust;
                 desc.inputWidth = source.width;
                 desc.inputHeight = source.height;
                 desc.resetHistory = reset ? 1 : 0;
@@ -149,7 +183,13 @@ struct UpscaleStage::Impl {
         Transition(list, outputLinear.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         if (!failure)
-            transfer.Dispatch(list, outputLinear.Get(), output, true);
+            transfer.Dispatch(list, outputLinear.Get(), providerOutput, true);
+        if (motionConfidence) {
+            Transition(list, providerOutput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            if (!failure) adaptive.Dispatch(list, providerOutput, color, distrust, output);
+            Transition(list, providerOutput, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON);
+        }
         Transition(list, outputLinear.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                    D3D12_RESOURCE_STATE_COMMON);
         Transition(list, inputLinear.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
@@ -164,11 +204,12 @@ void UpscaleStage::Reset() {
     impl_.reset();
 }
 void UpscaleStage::Create(processing::Upscaler provider, ID3D12Device* device, ID3D12GraphicsCommandList* list,
-                          Extent source, Extent target, const std::filesystem::path& directory) {
+                          Extent source, Extent target, const std::filesystem::path& directory, bool motionConfidence) {
     impl_ = std::make_unique<Impl>();
     impl_->provider = provider;
     impl_->source = source;
     impl_->target = target;
+    impl_->motionConfidence = motionConfidence;
     impl_->Create(device, list, directory);
 }
 void UpscaleStage::Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* color, ID3D12Resource* depth,

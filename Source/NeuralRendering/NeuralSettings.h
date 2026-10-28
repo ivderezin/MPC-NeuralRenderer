@@ -13,7 +13,7 @@ inline const wchar_t* Name(MotionMethod value) {
     return value == MotionMethod::EchoStorm ? L"EchoStorm coarse-to-fine" : L"Fast block matching";
 }
 struct Settings {
-    MotionMethod motionMethod = MotionMethod::Fast;
+    MotionMethod motionMethod = MotionMethod::EchoStorm;
     bool enabled = false;
     bool amdBridge = false; // Experimental AMDLSS5: dispatch FSR even at 1:1 resolution.
     bool FsrNative() const { return amdBridge && upscaler == processing::Upscaler::Fsr; }

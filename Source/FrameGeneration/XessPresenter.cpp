@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "XessPresenter.h"
 #include "GenerationPolicy.h"
+#include "../NeuralRendering/MotionRepair.h"
 #ifdef _WIN64
 #include "../Processing/RuntimeLibrary.h"
 #include "../Processing/ResourceBarrier.h"
@@ -94,7 +95,8 @@ struct XessPresenter::Impl {
     ComPtr<ID3D11ShaderResourceView> previousView;
     ComPtr<ID3D11ComputeShader> motion;
     ComPtr<ID3D11Buffer> constants;
-    SharedTexture scene, vectors, depth, distrust;
+    SharedTexture scene, vectors, repairedVectors, depth, distrust;
+    neural::MotionRepair motionRepair;
     neural::MotionEstimator estimator;
     bool echoMotion = false, echoReset = true;
     unsigned width = 0, height = 0, interpolations = 1, presentId = 0;
@@ -135,6 +137,8 @@ struct XessPresenter::Impl {
         previousView.Reset();
         scene = {};
         vectors = {};
+        repairedVectors = {};
+        distrust = {};
         depth = {};
         width = w;
         height = h;
@@ -150,6 +154,8 @@ struct XessPresenter::Impl {
         CheckHr(device11->CreateShaderResourceView(previous.Get(), nullptr, &previousView), "Create XeSS previous SRV");
         scene.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_B8G8R8A8_UNORM, false);
         vectors.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_R16G16_FLOAT);
+        repairedVectors.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_R16G16_FLOAT);
+        motionRepair.Initialize(device11.Get(), w, h);
         if (echoMotion) {
             distrust.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_R8_UNORM);
             estimator.Initialize(device11.Get(), w, h);
@@ -299,6 +305,8 @@ struct XessPresenter::Impl {
                 context11->CSSetConstantBuffers(0, 1, cb);
                 context11->CSSetShader(nullptr, nullptr, 0);
             }
+            motionRepair.Dispatch(context11.Get(), previousView.Get(), scene.srv.Get(),
+                vectors.srv.Get(), distrust.srv.Get(), repairedVectors.uav.Get());
         } else echoReset = true;
 
         context11->CopyResource(previous.Get(), scene.texture.Get());
@@ -316,19 +324,19 @@ struct XessPresenter::Impl {
         Transition(list.Get(), buffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
         Transition(list.Get(), scene.resource.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
         if (useFG) {
-            for (auto* resource : {vectors.resource.Get(), depth.resource.Get()})
+            for (auto* resource : {repairedVectors.resource.Get(), depth.resource.Get()})
                 Transition(list.Get(), resource, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
             xefg_swapchain_d3d12_resource_data_t data{};
             data.validity = XEFG_SWAPCHAIN_RV_ONLY_NOW;
             data.resourceSize = {width, height};
             data.incomingState = D3D12_RESOURCE_STATE_COPY_SOURCE;
             data.type = XEFG_SWAPCHAIN_RES_MOTION_VECTOR;
-            data.pResource = vectors.resource.Get();
+            data.pResource = repairedVectors.resource.Get();
             CheckIntel(xefgSwapChainD3D12TagFrameResourceFn(fg, list.Get(), presentId, &data), "Tag XeSS motion");
             data.type = XEFG_SWAPCHAIN_RES_DEPTH;
             data.pResource = depth.resource.Get();
             CheckIntel(xefgSwapChainD3D12TagFrameResourceFn(fg, list.Get(), presentId, &data), "Tag XeSS depth");
-            for (auto* resource : {vectors.resource.Get(), depth.resource.Get()})
+            for (auto* resource : {repairedVectors.resource.Get(), depth.resource.Get()})
                 Transition(list.Get(), resource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
             xefg_swapchain_frame_constant_data_t constantsData{};
             for (unsigned i = 0; i < 4; ++i)

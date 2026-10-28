@@ -143,11 +143,16 @@
     <ClInclude Include="NeuralRendering\FrameHistory.h" />
     <ClInclude Include="NeuralRendering\AsyncOutput.h" />
     <ClInclude Include="NeuralRendering\MotionShaders.h" />
+    <ClInclude Include="NeuralRendering\MotionRepair.h" />
+    <ClInclude Include="NeuralRendering\MotionRepairShaders.h" />
+    <ClCompile Include="NeuralRendering\MotionRepair.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClInclude Include="NeuralRendering\MotionEstimator.h" />
     <ClInclude Include="NeuralRendering\EchoMotionShaders.h" />
     <ClCompile Include="NeuralRendering\MotionEstimator.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClInclude Include="Ngx\Feature.h" />
     <ClInclude Include="Upscaling\UpscalePolicy.h" />
+    <ClInclude Include="Upscaling\MotionAdaptive.h" />
+    <ClInclude Include="Upscaling\MotionAdaptiveShaders.h" />
     <ClInclude Include="Upscaling\DlssSuperResolution.h" />
     <ClInclude Include="FrameGeneration\DlssMultiFrameGeneration.h" />
     <ClInclude Include="FrameGeneration\FramePlan.h" />

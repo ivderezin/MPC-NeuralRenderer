@@ -13,6 +13,8 @@
 #include <vector>
 #include "../Source/NeuralRendering/MotionShaders.h"
 #include "../Source/NeuralRendering/MotionEstimator.h"
+#include "../Source/NeuralRendering/MotionRepair.h"
+#include "../Source/Upscaling/MotionAdaptiveShaders.h"
 using Microsoft::WRL::ComPtr;
 void Check(HRESULT result) { if (FAILED(result)) throw std::runtime_error("D3D11 test failed: " + std::to_string(static_cast<unsigned long>(result))); }
 void Require(bool result, const char* message) { if (!result) throw std::runtime_error(message); }
@@ -195,6 +197,90 @@ int main() {
         echo.Dispatch(gpu.context.Get(),flat.srv.Get(),oddMotion.uav.Get(),oddDistrust.uav.Get(),true);
         echo.Dispatch(gpu.context.Get(),flat.srv.Get(),oddMotion.uav.Get(),oddDistrust.uav.Get(),false);
         for (float value:gpu.Read(oddMotion,2)) Require(value==0,"Odd/flat frames must not generate noisy EchoStorm motion");
+        // FG-only consensus: a flat panel and repeating shelf labels are ambiguous
+        // to a local matcher. A textured stationary HUD must keep its own zero vector.
+        neural::MotionRepair repair;
+        constexpr UINT repairWidth=256, repairHeight=128;
+        std::vector<float> repairBefore(repairWidth*repairHeight*4), repairNow(repairBefore.size());
+        std::vector<float> rawField(repairWidth*repairHeight*2);
+        auto paint=[&](UINT x,UINT y) {
+            if (x>=64 && x<160 && y>=32 && y<96) return .4f; // flat moving panel
+            if (x>=32 && x<224 && y>=96) return (x%8<4) ? .2f : .8f; // repeating labels
+            return referenceValue(x,y);
+        };
+        for (UINT y=0;y<repairHeight;++y) for (UINT x=0;x<repairWidth;++x) {
+            const size_t at=(static_cast<size_t>(y)*repairWidth+x)*4;
+            repairBefore[at]=repairBefore[at+1]=repairBefore[at+2]=paint(x,y); repairBefore[at+3]=1;
+        }
+        for (int direction : {1,-1}) {
+            const float dx=static_cast<float>(direction*16);
+            for (UINT y=0;y<repairHeight;++y) for (UINT x=0;x<repairWidth;++x) {
+                const auto px=static_cast<UINT>(std::clamp(static_cast<int>(x)+direction*16,0,static_cast<int>(repairWidth)-1));
+                const size_t at=(static_cast<size_t>(y)*repairWidth+x)*4;
+                std::copy_n(repairBefore.data()+(static_cast<size_t>(y)*repairWidth+px)*4,4,repairNow.data()+at);
+                const bool ambiguous=(x>=88 && x<136 && y>=48 && y<80) || (x>=88 && x<136 && y>=100 && y<124);
+                rawField[at/2]=ambiguous ? 0.f : dx; rawField[at/2+1]=0;
+                // A fixed textured overlay, where camera motion is a worse match.
+                if (x>=176 && x<208 && y>=40 && y<72) {
+                    std::copy_n(repairBefore.data()+at,4,repairNow.data()+at);
+                    rawField[at/2]=0;
+                }
+            }
+            auto oldFrame=gpu.Texture(repairWidth,repairHeight,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,repairBefore.data(),repairWidth*16);
+            auto newFrame=gpu.Texture(repairWidth,repairHeight,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,repairNow.data(),repairWidth*16);
+            auto rawMotion=gpu.Texture(repairWidth,repairHeight,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_SHADER_RESOURCE,rawField.data(),repairWidth*8);
+            auto repaired=gpu.Texture(repairWidth,repairHeight,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+            auto confidence=gpu.Texture(repairWidth,repairHeight,DXGI_FORMAT_R32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+            repair.Initialize(gpu.device.Get(),repairWidth,repairHeight);
+            repair.Dispatch(gpu.context.Get(),oldFrame.srv.Get(),newFrame.srv.Get(),rawMotion.srv.Get(),nullptr,
+                            repaired.uav.Get(),confidence.uav.Get(),1.f);
+            auto field=gpu.Read(repaired,2);
+            for (UINT y : {60u,110u}) for (UINT x=96;x<128;x+=4) {
+                const size_t at=(static_cast<size_t>(y)*repairWidth+x)*2;
+                Require(std::abs(field[at]-dx)<.05f && std::abs(field[at+1])<.05f,
+                        "FG repair must recover camera motion on flat and repeating patches in both directions");
+            }
+            for (UINT y=48;y<64;++y) for (UINT x=184;x<200;++x) {
+                const size_t at=(static_cast<size_t>(y)*repairWidth+x)*2;
+                Require(field[at]==0 && field[at+1]==0,"FG repair must not drag a textured stationary HUD");
+            }
+            for (float value:field) Require(std::isfinite(value),"FG repair must produce finite motion");
+            Require(gpu.Read(rawMotion,2)==rawField,"FG repair must preserve NR/SR's original motion field");
+            const auto confidencePixels=gpu.Read(confidence,1);
+            Require(confidencePixels[60*repairWidth+100]==1,"Fast camera motion must reject SR history after repair");
+            Require(confidencePixels[56*repairWidth+192]==0,"A fixed HUD must retain reliable SR history");
+            std::fill(rawField.begin(),rawField.end(),0.f);
+            auto stillMotion=gpu.Texture(repairWidth,repairHeight,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_SHADER_RESOURCE,rawField.data(),repairWidth*8);
+            repair.Dispatch(gpu.context.Get(),oldFrame.srv.Get(),oldFrame.srv.Get(),stillMotion.srv.Get(),nullptr,repaired.uav.Get());
+            for (float value:gpu.Read(repaired,2)) Require(value==0,"Static/reset FG vectors must stay exactly zero");
+        }
+        repair.Initialize(gpu.device.Get(),13,11);
+        auto tinyVectors=gpu.Texture(13,11,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_SHADER_RESOURCE,std::vector<float>(13*11*2,0.f).data(),13*8);
+        repair.Dispatch(gpu.context.Get(),flat.srv.Get(),flat.srv.Get(),tinyVectors.srv.Get(),nullptr,oddMotion.uav.Get());
+        for (float value:gpu.Read(oddMotion,2)) Require(value==0,"FG repair must handle odd and partial tiles");
+        // Provider-independent protection also covers DLSS models ignoring bias masks.
+        auto adaptiveShader=gpu.Compile(upscaling::MotionAdaptiveShader);
+        D3D11_SAMPLER_DESC sampleDesc{};
+        sampleDesc.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sampleDesc.AddressU=sampleDesc.AddressV=sampleDesc.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;
+        sampleDesc.MaxLOD=D3D11_FLOAT32_MAX;
+        ComPtr<ID3D11SamplerState> linearSampler;
+        Check(gpu.device->CreateSamplerState(&sampleDesc,&linearSampler));
+        ID3D11SamplerState* sampleState=linearSampler.Get();
+        gpu.context->CSSetSamplers(0,1,&sampleState);
+        std::vector<float> invented(13*11*4,.9f), plain(7*5*4,.25f);
+        auto up=gpu.Texture(13,11,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,invented.data(),13*16);
+        auto original=gpu.Texture(7,5,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,plain.data(),7*16);
+        auto adaptiveOutput=gpu.Texture(13,11,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+        for (float d : {0.f,1.f}) {
+            std::vector<float> maskValues(7*5,d);
+            auto mask=gpu.Texture(7,5,DXGI_FORMAT_R32_FLOAT,D3D11_BIND_SHADER_RESOURCE,maskValues.data(),7*4);
+            gpu.Dispatch(adaptiveShader.Get(),up,&original,adaptiveOutput,13,11,0,0,0,false,nullptr,&mask);
+            const auto result=gpu.Read(adaptiveOutput,4);
+            for (size_t k=0;k<result.size();k+=4)
+                Require(std::abs(result[k]-(d==0 ? .9f : .25f))<.0001f,
+                        "SR must retain trusted detail and replace untrusted history with this frame for every provider");
+        }
         auto crop=gpu.Texture(13,11,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
         auto prepare=gpu.Compile(neural::PrepareShader.c_str());
         gpu.Dispatch(prepare.Get(),previous,nullptr,crop,13,11,0,5,7);

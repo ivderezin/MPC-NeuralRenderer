@@ -44,7 +44,7 @@
    - **Enable neural rendering**, **Intensity** — NR, интенсивность 0–200%.
    - **NR stage** — где выполняется NR при апскейле: **Before upscaling** (на исходном кадре, быстрее всего), **After upscaling** (на увеличенном кадре) или **Before and after** (два прохода). Без апскейла NR всегда выполняется один раз на исходном кадре.
    - **Upscaling** — Off / DLSS SR / FSR 3.1 / XeSS.
-   - **Motion estimation** — **Fast block matching** (по умолчанию) или **EchoStorm coarse-to-fine**. Выбор общий для NR, апскейла и DLSS / FSR / XeSS FG; сохраняется по Apply. EchoStorm доступен начиная с релиза `v0.1.3`.
+   - **Motion estimation** — **EchoStorm coarse-to-fine** (по умолчанию для новых настроек) или **Fast block matching**. Выбор общий для NR, апскейла и DLSS / FSR / XeSS FG; сохраняется по Apply. Сохранённый выбор Fast сохраняется: для перехода выберите EchoStorm и Apply. Базовый EchoStorm появился в `v0.1.3`; текущая ветка добавляет полный путь коррекции движения и защиты истории апскейлеров.
    - **Frame generation** — DLSS MFG / FSR FG / XeSS FG; **Multiplier** — Off / 2x / 3x / 4x.
    - **Present DLSS / FSR generated frames from a dedicated thread** — показ сгенерированных кадров из отдельного потока с очередью пакетов вместо таймера в UI-потоке плеера. Меньше опозданий и потерянных реальных кадров; задержка — до одного интервала между кадрами.
 6. Нажмите **Apply**. Включите **Show statistics**, чтобы увидеть выбранные режимы, состояние обработки и причину отказа, если функция недоступна.
@@ -52,6 +52,8 @@
 Апскейлер и генератор выбираются независимо: например, FSR + XeSS FG или XeSS + DLSS MFG. NR также включается отдельно. Это дополнительный DirectShow-рендерер: регистрация штатного MPC Video Renderer и настройки его вывода сохраняются. Для удаления закройте плеер и запустите `Uninstall_MPCVR_64.cmd` от администратора.
 
 ### Апскейл и генерация
+
+В текущей ветке полный путь EchoStorm включает коррекцию неоднозначных векторов на ровных и повторяющихся участках по движению окружения. Исправленные векторы используются NR, DLSS / FSR / XeSS SR и FG; в режиме Fast коррекция применяется перед FG. Отдельная маска ненадёжных областей передаётся DLSS SR, FSR (reactive) и XeSS (responsive pixel mask). При быстром движении и ненадёжной истории общий проход после апскейла смешивает результат модели с пространственным увеличением текущего кадра (Catmull–Rom). Это может уменьшать детализацию в движении; на доверенных участках результат модели сохраняется. Изменения проверяются GPU-тестами; устранение артефактов в Call of Duty ещё требует повторной проверки в игре.
 
 Апскейл включается, только когда исходный кадр меньше разрешения монитора и области вывода: 1080p → 4K увеличивается, 4K → 4K — нет. NR получает полное исходное изображение. При выключенном или недоступном нейроапскейлере обычное масштабирование рендерера продолжает заполнять область просмотра с пропорциями, выбранными в плеере; уменьшение для размещения в окне также сохраняется. Исключение — экспериментальный режим FSR native AA для AMD-моста: он вызывает FSR и при 1:1.
 
@@ -163,7 +165,7 @@ The project started from wanting to try neural rendering in Nintendo Switch 2 ga
    - **Enable neural rendering**, **Intensity** — NR with 0–200% intensity.
    - **NR stage** — where NR runs when upscaling: **Before upscaling** (on the source frame, fastest), **After upscaling** (on the upscaled frame), or **Before and after** (two passes). Without upscaling, NR always runs once on the source frame.
    - **Upscaling** — Off / DLSS SR / FSR 3.1 / XeSS.
-   - **Motion estimation** — **Fast block matching** (default) or **EchoStorm coarse-to-fine**. Applies to NR, upscaling, and DLSS / FSR / XeSS FG; saved with Apply. EchoStorm is available starting with release `v0.1.3`.
+   - **Motion estimation** — **EchoStorm coarse-to-fine** (default for new settings) or **Fast block matching**. Applies to NR, upscaling, and DLSS / FSR / XeSS FG; saved with Apply. An explicitly saved Fast choice is preserved; select EchoStorm and Apply to switch. Basic EchoStorm support shipped in `v0.1.3`; the current branch adds the full motion-repair and upscaler history-protection path.
    - **Frame generation** — DLSS MFG / FSR FG / XeSS FG; **Multiplier** — Off / 2x / 3x / 4x.
    - **Present DLSS / FSR generated frames from a dedicated thread** — presents generated frames from a dedicated thread with a queued schedule instead of a timer on the player's UI thread. Fewer late and dropped real frames, at up to one frame interval of extra latency.
 6. Click **Apply**. Enable **Show statistics** to see the selected modes, processing status, and the reason if a feature is unavailable.
@@ -171,6 +173,8 @@ The project started from wanting to try neural rendering in Nintendo Switch 2 ga
 Select the upscaler and frame generator independently: for example, FSR + XeSS FG or XeSS + DLSS MFG. NR is also enabled separately. This is an additional DirectShow renderer: the stock MPC Video Renderer registration and output settings are preserved. To uninstall, close the player and run `Uninstall_MPCVR_64.cmd` as administrator.
 
 ### Upscaling and frame generation
+
+The current branch adds EchoStorm local-consensus repair for ambiguous vectors on flat and repeating patches. NR, DLSS / FSR / XeSS SR and FG share the repaired field; Fast applies repair before FG. A separate confidence mask reaches DLSS SR, FSR (reactive), and XeSS (responsive pixel mask). A shared post-upscale pass blends unreliable or fast-moving areas toward a spatial reconstruction of the current frame (Catmull–Rom), while preserving trusted model detail. This can reduce detail in motion. GPU tests cover the changes; resolving the Call of Duty artifacts still needs another in-game check.
 
 Upscaling runs only when the source frame is smaller than both the monitor resolution and the output area: 1080p → 4K is upscaled; 4K → 4K is not. NR receives the full source image. With neural upscaling disabled or unavailable, the renderer uses ordinary resizing to fill the viewport according to the player's aspect ratio setting; downscaling to fit the window remains available. Experimental FSR native AA for the AMD bridge is an exception: it also dispatches FSR at 1:1.
 
