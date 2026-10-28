@@ -87,6 +87,7 @@ void CVRMainPPage::SetControls()
 	ComboBox_SelectByItemData(m_hWnd, IDC_FRAME_GENERATOR, static_cast<unsigned>(m_neuralSettings.frameGenerator));
 	ComboBox_SelectByItemData(m_hWnd, IDC_DLSS_MFG, m_neuralSettings.frameMultiplier);
 	CheckDlgButton(IDC_NEURAL_ENABLED, m_neuralSettings.enabled ? BST_CHECKED : BST_UNCHECKED);
+	ComboBox_SelectByItemData(m_hWnd, IDC_NR_STAGE, static_cast<unsigned>(m_neuralSettings.nrStage));
 	CheckDlgButton(IDC_MFG_PRESENT_THREAD, m_neuralSettings.presentThread ? BST_CHECKED : BST_UNCHECKED);
 	ComboBox_SelectByItemData(m_hWnd, IDC_NEURAL_INTENSITY, m_neuralSettings.intensity);
 
@@ -158,6 +159,7 @@ void CVRMainPPage::EnableControls()
 	GetDlgItem(IDC_DLSS_MFG).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_MFG_PRESENT_THREAD).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_NEURAL_INTENSITY).EnableWindow(neuralAvailable && m_neuralSettings.enabled);
+	GetDlgItem(IDC_NR_STAGE).EnableWindow(neuralAvailable && m_neuralSettings.enabled);
 
 	if (!IsWindows8OrGreater()) { // Windows 7
 		const BOOL bEnable = !m_SetsPP.bUseD3D11;
@@ -236,6 +238,10 @@ HRESULT CVRMainPPage::OnActivate()
 	SendDlgItemMessageW(IDC_UPSCALER, CB_RESETCONTENT, 0, 0);
 	for (auto provider : {processing::Upscaler::Off, processing::Upscaler::Dlss, processing::Upscaler::Fsr, processing::Upscaler::Xess})
 		ComboBox_AddStringData(m_hWnd, IDC_UPSCALER, processing::Name(provider), static_cast<unsigned>(provider));
+	SendDlgItemMessageW(IDC_NR_STAGE, CB_RESETCONTENT, 0, 0);
+	ComboBox_AddStringData(m_hWnd, IDC_NR_STAGE, L"Before upscaling", static_cast<unsigned>(neural::NrStage::BeforeUpscale));
+	ComboBox_AddStringData(m_hWnd, IDC_NR_STAGE, L"After upscaling", static_cast<unsigned>(neural::NrStage::AfterUpscale));
+	ComboBox_AddStringData(m_hWnd, IDC_NR_STAGE, L"Before and after", static_cast<unsigned>(neural::NrStage::Both));
 	SendDlgItemMessageW(IDC_FRAME_GENERATOR, CB_RESETCONTENT, 0, 0);
 	for (auto provider : {processing::FrameGenerator::Dlss, processing::FrameGenerator::Fsr, processing::FrameGenerator::Xess})
 		ComboBox_AddStringData(m_hWnd, IDC_FRAME_GENERATOR, processing::Name(provider), static_cast<unsigned>(provider));
@@ -527,6 +533,10 @@ INT_PTR CVRMainPPage::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 		}
 
 		if (action == CBN_SELCHANGE) {
+			if (nID == IDC_NR_STAGE) {
+				m_neuralSettings.nrStage = static_cast<neural::NrStage>(ComboBox_GetCurItemData(m_hWnd, IDC_NR_STAGE));
+				SetDirty(); return (LRESULT)1;
+			}
 			if (nID == IDC_UPSCALER) {
 				m_neuralSettings.upscaler = static_cast<processing::Upscaler>(ComboBox_GetCurItemData(m_hWnd, IDC_UPSCALER));
 				SetDirty(); return (LRESULT)1;

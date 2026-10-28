@@ -56,16 +56,19 @@ int main() {
                 settings.enabled = true;
                 settings.intensity = 200;
                 settings.presentThread = generator == FrameGenerator::Fsr;
+                settings.nrStage = static_cast<neural::NrStage>(static_cast<unsigned>(upscaler) % 3);
                 Require(settings.Save() == ERROR_SUCCESS, "Save failed");
                 Require(neural::Settings::Load() == settings, "Independent provider settings did not survive reload");
             }
         registry.Write(L"Upscaler", 99);
         registry.Write(L"FrameGenerator", 99);
         registry.Write(L"FrameMultiplier", 99);
+        registry.Write(L"NrStage", 99);
         settings = neural::Settings::Load();
         Require(settings.upscaler == Upscaler::Off && settings.frameGenerator == FrameGenerator::Dlss,
                 "Invalid providers must fall back to valid settings");
         Require(settings.frameMultiplier == 4, "Invalid multiplier must clamp");
+        Require(settings.nrStage == neural::NrStage::BeforeUpscale, "Invalid NR stage must fall back to before upscaling");
         std::cout << "Settings migration tests passed\n";
         return 0;
     } catch (const std::exception& error) {

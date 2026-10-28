@@ -137,6 +137,18 @@ int main() {
         pixels=gpu.Read(crop,4);
         for (UINT y=0;y<11;++y) for (UINT x=0;x<13;++x)
             Require(pixels[(y*13+x)*4]==oldPixels[((y+7)*size+x+5)*4],"Crop origin / odd extent must preserve video pixels");
+        // After-upscaling NR: 8x8 source motion resampled to 16x16, scaled by the 2x ratio.
+        std::vector<float> lowMotion(8*8*2);
+        for (UINT i=0;i<8*8;++i) { lowMotion[i*2]=static_cast<float>(i%8); lowMotion[i*2+1]=-static_cast<float>(i/8); }
+        auto lowRes=gpu.Texture(8,8,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_SHADER_RESOURCE,lowMotion.data(),8*8);
+        auto highRes=gpu.Texture(16,16,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+        auto scale=gpu.Compile(neural::ScaleMotionShader);
+        gpu.Dispatch(scale.Get(),lowRes,nullptr,highRes,8,8,0,16,16); // constants: source 8x8, target 16x16
+        pixels=gpu.Read(highRes,2);
+        for (UINT y=0;y<8;++y) for (UINT x=0;x<8;++x) {
+            const auto index=(static_cast<size_t>(y)*16+x)*2;
+            Require(pixels[index]==2.0f*static_cast<float>(x/2) && pixels[index+1]==-2.0f*static_cast<float>(y/2),"Upscaled motion must be resampled and scaled to output pixels");
+        }
         std::cout << "GPU motion and crop tests passed (D3D11 WARP)\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

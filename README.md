@@ -33,6 +33,7 @@
 4. В MPC-HC x64 откройте **Options → External Filters → Add Filter → MPC Neural Renderer → Prefer**. Если фильтра нет в списке, нажмите **Browse** и укажите `nvngx.dll_MpcNeuralRenderer64.ax`.
 5. Откройте видео или устройство захвата. Через **Play → Filters → MPC Neural Renderer** откройте настройки, включите **Use Direct3D 11** и выберите обработку:
    - **Enable neural rendering**, **Intensity** — NR, интенсивность 0–200%.
+   - **NR stage** — где выполняется NR при апскейле: **Before upscaling** (на исходном кадре, быстрее всего), **After upscaling** (на увеличенном кадре) или **Before and after** (два прохода). Без апскейла NR всегда выполняется один раз на исходном кадре.
    - **Upscaling** — Off / DLSS SR / FSR 3.1 / XeSS.
    - **Frame generation** — DLSS MFG / FSR FG / XeSS FG; **Multiplier** — Off / 2x / 3x / 4x.
    - **Present DLSS / FSR generated frames from a dedicated thread** — показ сгенерированных кадров из отдельного потока с очередью пакетов вместо таймера в UI-потоке плеера. Меньше опозданий и потерянных реальных кадров; задержка — до одного интервала между кадрами.
@@ -97,6 +98,7 @@ The project started from wanting to try neural rendering in Nintendo Switch 2 ga
 4. In MPC-HC x64, open **Options → External Filters → Add Filter → MPC Neural Renderer → Prefer**. If the filter is missing, click **Browse** and select `nvngx.dll_MpcNeuralRenderer64.ax`.
 5. Open a video or capture device. Open the renderer settings through **Play → Filters → MPC Neural Renderer**, enable **Use Direct3D 11**, and choose the processing options:
    - **Enable neural rendering**, **Intensity** — NR with 0–200% intensity.
+   - **NR stage** — where NR runs when upscaling: **Before upscaling** (on the source frame, fastest), **After upscaling** (on the upscaled frame), or **Before and after** (two passes). Without upscaling, NR always runs once on the source frame.
    - **Upscaling** — Off / DLSS SR / FSR 3.1 / XeSS.
    - **Frame generation** — DLSS MFG / FSR FG / XeSS FG; **Multiplier** — Off / 2x / 3x / 4x.
    - **Present DLSS / FSR generated frames from a dedicated thread** — presents generated frames from a dedicated thread with a queued schedule instead of a timer on the player's UI thread. Fewer late and dropped real frames, at up to one frame interval of extra latency.

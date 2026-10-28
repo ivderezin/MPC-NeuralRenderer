@@ -222,8 +222,8 @@ struct NeuralPass::Impl {
     DXGI_FORMAT sourceFormat = DXGI_FORMAT_UNKNOWN;
     ComPtr<ID3D11Texture2D> source, previous;
     ComPtr<ID3D11ShaderResourceView> sourceView, previousView;
-    ComPtr<ID3D11ComputeShader> prepare, motion;
-    ComPtr<ID3D11Buffer> constants;
+    ComPtr<ID3D11ComputeShader> prepare, motion, scaleMotion;
+    ComPtr<ID3D11Buffer> constants, scaleConstants;
     SharedTexture color, output, vectors, depth;
     FrameHistory history;
     Settings options;
@@ -231,9 +231,12 @@ struct NeuralPass::Impl {
     double refreshHz = 60;
     upscaling::UpscaleStage superResolution;
     framegen::GenerationStage frameGeneration;
-    bool nrUsable = false, srUsable = false, fgUsable = false, fgNeedsReset = true, recreateFG = false;
+    // nrUsable: NR on the source frame; nrPostUsable: NR on the upscaled frame.
+    bool nrUsable = false, nrPostUsable = false, srUsable = false, fgUsable = false, fgNeedsReset = true,
+         recreateFG = false;
     bool fgLimitedByDisplay = false;
-    std::wstring nrFailure, srFailure, fgFailure;
+    std::wstring nrFailure, nrPostFailure, srFailure, fgFailure;
+    SharedTexture postOutput, postVectors, postDepth;
     SharedTexture scaled;
     std::array<SharedTexture, 3> generated;
     // Completed output is double buffered by batch serial, so a queued batch stays intact while the
@@ -249,8 +252,12 @@ struct NeuralPass::Impl {
     unsigned long long serial = 0;
     long long lastInputTimestamp = 0, pendingDuration = 0, outputDuration = 0;
     Module snippet;
-    NVSDK_NGX_Parameter* params = nullptr;
-    NVSDK_NGX_Handle* feature = nullptr;
+    struct NrFeature {
+        NVSDK_NGX_Parameter* params = nullptr;
+        NVSDK_NGX_Handle* handle = nullptr;
+        UINT width = 0, height = 0;
+    };
+    NrFeature nrPre, nrPost;
     CreateFn create = nullptr;
     EvaluateFn evaluate = nullptr;
     ReleaseFn release = nullptr;
@@ -270,10 +277,12 @@ struct NeuralPass::Impl {
         }
         superResolution.Reset();
         frameGeneration.Reset();
-        if (feature && release)
-            CallRelease(release, feature);
-        if (params)
-            NVSDK_NGX_D3D12_DestroyParameters(params);
+        for (auto* nr : {&nrPre, &nrPost}) {
+            if (nr->handle && release)
+                CallRelease(release, nr->handle);
+            if (nr->params)
+                NVSDK_NGX_D3D12_DestroyParameters(nr->params);
+        }
         if (snippetInitialized && shutdown)
             CallShutdown(shutdown, device12.Get());
         if (coreInitialized)
@@ -326,10 +335,18 @@ struct NeuralPass::Impl {
     std::wstring Status() const {
         std::wostringstream message;
         if (options.enabled) {
-            if (!nrUsable)
-                message << L"NR: " << nrFailure;
-            else
-                message << L"NR: " << (asyncOutput.Available() ? L"Active " : L"Starting ") << width << L"x" << height;
+            if (!nrUsable && !nrPostUsable)
+                message << L"NR: " << (nrFailure.empty() ? nrPostFailure : nrFailure);
+            else {
+                message << L"NR: " << (asyncOutput.Available() ? L"Active" : L"Starting");
+                if (nrUsable)
+                    message << L" " << width << L"x" << height << (srUsable ? L" before upscaling" : L"");
+                if (nrPostUsable)
+                    message << (nrUsable ? L" +" : L"") << L" " << target.width << L"x" << target.height
+                            << L" after upscaling";
+                if (!nrPostFailure.empty())
+                    message << L" (after-upscaling pass: " << nrPostFailure << L")";
+            }
         } else
             message << L"NR: Off";
         message << L"\n" << processing::Name(options.upscaler) << L" upscaling: ";
@@ -451,6 +468,7 @@ struct NeuralPass::Impl {
         Check(device->CreateShaderResourceView(previous.Get(), nullptr, &previousView), "Create previous SRV");
         prepare = Compile(device, PrepareShader);
         motion = Compile(device, MotionShader);
+        scaleMotion = Compile(device, ScaleMotionShader);
         D3D11_QUERY_DESC preparationQuery{};
         preparationQuery.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
         Check(device->CreateQuery(&preparationQuery, &preparationClock), "Create preparation clock query");
@@ -461,6 +479,8 @@ struct NeuralPass::Impl {
         buffer.ByteWidth = 32;
         buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         Check(device->CreateBuffer(&buffer, nullptr, &constants), "Create constants");
+        buffer.ByteWidth = 16;
+        Check(device->CreateBuffer(&buffer, nullptr, &scaleConstants), "Create motion scale constants");
         const float zero[4]{};
         context11->ClearUnorderedAccessViewFloat(depth.uav.Get(), zero);
         context11->ClearUnorderedAccessViewFloat(vectors.uav.Get(), zero);
@@ -493,11 +513,11 @@ struct NeuralPass::Impl {
             }
         }
         Begin();
+        bool nrLoaded = false;
         if (options.enabled) {
             try {
                 if (!coreInitialized)
                     throw std::runtime_error(std::string(ngxFailure.begin(), ngxFailure.end()));
-                CheckNgx(NVSDK_NGX_D3D12_AllocateParameters(&params), "Allocate NGX parameters");
                 const auto model = directory / L"nvngx_dlssnr.dll";
                 snippet.value = LoadLibraryExW(model.c_str(), nullptr,
                                                LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
@@ -510,25 +530,7 @@ struct NeuralPass::Impl {
                 shutdown = Export<ShutdownFn>(snippet.value, "NVSDK_NGX_D3D12_Shutdown1");
                 CheckNgx(CallInit(init, modelDir.c_str(), device12.Get()), "Initialize NR model");
                 snippetInitialized = true;
-                for (const auto* key : {"DLSSNR.Width", "DLSSNR.InputWidth", "DLSSNR.OutputWidth",
-                                        "DLSSNR.Output.Width", "Width", "OutWidth"})
-                    params->Set(key, width);
-                for (const auto* key : {"DLSSNR.Height", "DLSSNR.InputHeight", "DLSSNR.OutputHeight",
-                                        "DLSSNR.Output.Height", "Height", "OutHeight"})
-                    params->Set(key, height);
-                params->Set("DLSSNR.Upscaling", 0u);
-                params->Set("DLSSNR.Scale", 1.0f);
-                params->Set("DLSSNR.ScalingRatio", 1.0f);
-                params->Set("DLSSNRComputeScalingRatioCallback", reinterpret_cast<void*>(&ScalingRatio));
-                params->Set("DLSSNR.Hint.Render.Preset", 0u);
-                params->Set(NVSDK_NGX_Parameter_PerfQualityValue,
-                            static_cast<int>(NVSDK_NGX_PerfQuality_Value_Balanced));
-                params->Set(NVSDK_NGX_Parameter_CreationNodeMask, 1u);
-                params->Set(NVSDK_NGX_Parameter_VisibilityNodeMask, 1u);
-                CheckNgx(CallCreate(create, list.Get(), params, &feature), "Create NR feature");
-                if (!feature)
-                    throw std::runtime_error("NR returned no feature handle");
-                nrUsable = true;
+                nrLoaded = true;
             } catch (const std::exception& error) {
                 nrFailure = ngx::Message(error);
             }
@@ -544,6 +546,32 @@ struct NeuralPass::Impl {
                 srUsable = true;
             } catch (const std::exception& error) {
                 srFailure = ngx::Message(error);
+            }
+        }
+        if (nrLoaded) {
+            // Without an upscaled frame the after-upscaling pass falls back to the source frame.
+            const bool post = srUsable && options.nrStage != NrStage::BeforeUpscale;
+            const bool pre = !srUsable || options.nrStage != NrStage::AfterUpscale;
+            if (pre) {
+                try {
+                    CreateNr(nrPre, width, height);
+                    nrUsable = true;
+                } catch (const std::exception& error) {
+                    nrFailure = ngx::Message(error);
+                }
+            }
+            if (post) {
+                try {
+                    postOutput.Create(device, device12.Get(), target.width, target.height, DXGI_FORMAT_R8G8B8A8_UNORM);
+                    postVectors.Create(device, device12.Get(), target.width, target.height, DXGI_FORMAT_R16G16_FLOAT);
+                    postDepth.Create(device, device12.Get(), target.width, target.height, DXGI_FORMAT_R32_FLOAT);
+                    context11->ClearUnorderedAccessViewFloat(postDepth.uav.Get(), zero);
+                    context11->ClearUnorderedAccessViewFloat(postVectors.uav.Get(), zero);
+                    CreateNr(nrPost, target.width, target.height);
+                    nrPostUsable = true;
+                } catch (const std::exception& error) {
+                    nrPostFailure = ngx::Message(error);
+                }
             }
         }
         if (options.ManualGeneration()) {
@@ -571,6 +599,52 @@ struct NeuralPass::Impl {
         fgUsable = true;
         fgNeedsReset = true;
         recreateFG = false;
+    }
+    void CreateNr(NrFeature& nr, UINT w, UINT h) {
+        CheckNgx(NVSDK_NGX_D3D12_AllocateParameters(&nr.params), "Allocate NGX parameters");
+        nr.width = w;
+        nr.height = h;
+        auto* params = nr.params;
+        for (const auto* key :
+             {"DLSSNR.Width", "DLSSNR.InputWidth", "DLSSNR.OutputWidth", "DLSSNR.Output.Width", "Width", "OutWidth"})
+            params->Set(key, w);
+        for (const auto* key : {"DLSSNR.Height", "DLSSNR.InputHeight", "DLSSNR.OutputHeight", "DLSSNR.Output.Height",
+                                "Height", "OutHeight"})
+            params->Set(key, h);
+        params->Set("DLSSNR.Upscaling", 0u);
+        params->Set("DLSSNR.Scale", 1.0f);
+        params->Set("DLSSNR.ScalingRatio", 1.0f);
+        params->Set("DLSSNRComputeScalingRatioCallback", reinterpret_cast<void*>(&ScalingRatio));
+        params->Set("DLSSNR.Hint.Render.Preset", 0u);
+        params->Set(NVSDK_NGX_Parameter_PerfQualityValue, static_cast<int>(NVSDK_NGX_PerfQuality_Value_Balanced));
+        params->Set(NVSDK_NGX_Parameter_CreationNodeMask, 1u);
+        params->Set(NVSDK_NGX_Parameter_VisibilityNodeMask, 1u);
+        CheckNgx(CallCreate(create, list.Get(), params, &nr.handle), "Create NR feature");
+        if (!nr.handle)
+            throw std::runtime_error("NR returned no feature handle");
+    }
+    NVSDK_NGX_Result EvaluateNr(NrFeature& nr, ID3D12Resource* input, ID3D12Resource* result,
+                                ID3D12Resource* motionVectors, ID3D12Resource* depthInput, bool reset) {
+        auto* params = nr.params;
+        params->Set("DLSSNR.Color", input);
+        params->Set("DLSSNR.Output", result);
+        params->Set("DLSSNR.MVec", motionVectors);
+        params->Set("DLSSNR.Depth", depthInput);
+        for (const auto* name : {"Color", "Output", "MVec", "Depth"})
+            Subrect(params, name, nr.width, nr.height);
+        params->Set("DLSSNR.MVecScaleX", 1.0f);
+        params->Set("DLSSNR.MVecScaleY", 1.0f);
+        params->Set("DLSSNR.DepthInverted", 1);
+        params->Set("DLSSNR.Enabled", 1);
+        params->Set("DLSSNR.Reset", reset ? 1 : 0);
+        params->Set("DLSSNR.Style", 0);
+        params->Set("DLSSNR.Intensity", options.intensity / 100.0f);
+        params->Set("DLSSNR.LocalToneStrength", 1.0f);
+        params->Set("DLSSNR.LocalStructureStrength", 1.0f);
+        params->Set("DLSSNR.SkinStructureStrength", 1.0f);
+        params->Set("DLSSNR.UseAutoMask", 1);
+        params->Set("DLSSNR.UICorrection", 1);
+        return CallEvaluate(evaluate, list.Get(), nr.handle, params);
     }
     // Creates or reuses a shader-readable copy target matching source.
     void DisplayCopy(ComPtr<ID3D11Texture2D>& target, ID3D11Texture2D* source) {
@@ -605,7 +679,7 @@ struct NeuralPass::Impl {
         list->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
     }
     ID3D11Texture2D* Run(ID3D11Texture2D* frame, long long timestamp, float defaultFrameTimeMs) {
-        if (!nrUsable && !srUsable && !fgUsable && !recreateFG) {
+        if (!nrUsable && !nrPostUsable && !srUsable && !fgUsable && !recreateFG) {
             asyncOutput.Invalidate();
             published = nullptr;
             generatedCount = 0;
@@ -689,6 +763,26 @@ struct NeuralPass::Impl {
         context11->CSSetUnorderedAccessViews(0, 1, target, nullptr);
         context11->CSSetConstantBuffers(0, 1, cb);
         context11->CSSetShader(nullptr, nullptr, 0);
+        if (nrPostUsable && srUsable) {
+            // The after-upscaling NR pass needs motion at the output resolution.
+            const UINT scaleData[] = {width, height, target.width, target.height};
+            context11->UpdateSubresource(scaleConstants.Get(), 0, nullptr, scaleData, 0, 0);
+            ID3D11Buffer* scaleBuffer[] = {scaleConstants.Get()};
+            ID3D11ShaderResourceView* scaleInput[] = {vectors.srv.Get()};
+            ID3D11UnorderedAccessView* scaleOutput[] = {postVectors.uav.Get()};
+            context11->CSSetConstantBuffers(0, 1, scaleBuffer);
+            context11->CSSetShader(scaleMotion.Get(), nullptr, 0);
+            context11->CSSetShaderResources(0, 1, scaleInput);
+            context11->CSSetUnorderedAccessViews(0, 1, scaleOutput, nullptr);
+            context11->Dispatch((target.width + 7) / 8, (target.height + 7) / 8, 1);
+            scaleBuffer[0] = nullptr;
+            scaleInput[0] = nullptr;
+            scaleOutput[0] = nullptr;
+            context11->CSSetShaderResources(0, 1, scaleInput);
+            context11->CSSetUnorderedAccessViews(0, 1, scaleOutput, nullptr);
+            context11->CSSetConstantBuffers(0, 1, scaleBuffer);
+            context11->CSSetShader(nullptr, nullptr, 0);
+        }
         context11->CopyResource(previous.Get(), color.texture.Get());
         context11->End(preparationEnd.Get());
         context11->End(preparationClock.Get());
@@ -704,25 +798,8 @@ struct NeuralPass::Impl {
         pendingHasFG = false;
         bool outputRead = false;
         if (nrUsable) {
-            params->Set("DLSSNR.Color", color.resource.Get());
-            params->Set("DLSSNR.Output", output.resource.Get());
-            params->Set("DLSSNR.MVec", vectors.resource.Get());
-            params->Set("DLSSNR.Depth", depth.resource.Get());
-            for (const auto* name : {"Color", "Output", "MVec", "Depth"})
-                Subrect(params, name, width, height);
-            params->Set("DLSSNR.MVecScaleX", 1.0f);
-            params->Set("DLSSNR.MVecScaleY", 1.0f);
-            params->Set("DLSSNR.DepthInverted", 1);
-            params->Set("DLSSNR.Enabled", 1);
-            params->Set("DLSSNR.Reset", reset ? 1 : 0);
-            params->Set("DLSSNR.Style", 0);
-            params->Set("DLSSNR.Intensity", options.intensity / 100.0f);
-            params->Set("DLSSNR.LocalToneStrength", 1.0f);
-            params->Set("DLSSNR.LocalStructureStrength", 1.0f);
-            params->Set("DLSSNR.SkinStructureStrength", 1.0f);
-            params->Set("DLSSNR.UseAutoMask", 1);
-            params->Set("DLSSNR.UICorrection", 1);
-            const auto result = CallEvaluate(evaluate, list.Get(), feature, params);
+            const auto result = EvaluateNr(nrPre, color.resource.Get(), output.resource.Get(), vectors.resource.Get(),
+                                           depth.resource.Get(), reset);
             if (result == NVSDK_NGX_Result_Success) {
                 ngx::Transition(list.Get(), output.resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -761,6 +838,31 @@ struct NeuralPass::Impl {
                 srFailure = ngx::Message(error);
             }
         }
+        bool postActive = false, postRead = false;
+        if (nrPostUsable && pendingScaled) {
+            postActive = true;
+            ngx::Transition(list.Get(), postOutput.resource.Get(), D3D12_RESOURCE_STATE_COMMON,
+                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            for (auto* resource : {postVectors.resource.Get(), postDepth.resource.Get()})
+                ngx::Transition(list.Get(), resource, D3D12_RESOURCE_STATE_COMMON,
+                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            const auto result = EvaluateNr(nrPost, scaled.resource.Get(), postOutput.resource.Get(),
+                                           postVectors.resource.Get(), postDepth.resource.Get(), reset);
+            if (result == NVSDK_NGX_Result_Success) {
+                ngx::Transition(list.Get(), postOutput.resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                postRead = true;
+                finalColor = postOutput.resource.Get();
+                pendingReal = postOutput.texture.Get();
+            } else {
+                nrPostUsable = false;
+                try {
+                    CheckNgx(result, "Evaluate NR after upscaling");
+                } catch (const std::exception& error) {
+                    nrPostFailure = ngx::Message(error);
+                }
+            }
+        }
         if (fgUsable) {
             const auto count = framegen::GeneratedLimit(options.frameMultiplier, frameGeneration.MaxGenerated(),
                                                         refreshHz, frameTimeMs);
@@ -792,6 +894,15 @@ struct NeuralPass::Impl {
                             D3D12_RESOURCE_STATE_COMMON);
         list->EndQuery(timingQueries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
         list->ResolveQueryData(timingQueries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, timingReadback.Get(), 0);
+        if (postActive) {
+            ngx::Transition(list.Get(), postOutput.resource.Get(),
+                            postRead ? D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
+                                     : D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                            D3D12_RESOURCE_STATE_COMMON);
+            for (auto* resource : {postVectors.resource.Get(), postDepth.resource.Get()})
+                ngx::Transition(list.Get(), resource, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                                D3D12_RESOURCE_STATE_COMMON);
+        }
         Transition(false, outputRead);
         Submit(true);
         history.Commit(timestamp);

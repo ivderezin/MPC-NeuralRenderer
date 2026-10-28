@@ -31,6 +31,10 @@ Settings Settings::Load() {
         ERROR_SUCCESS)
         settings.frameMultiplier = std::clamp(static_cast<unsigned>(value), 1u, 4u);
     size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER, Key, L"NrStage", RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS &&
+        value <= 2)
+        settings.nrStage = static_cast<NrStage>(value);
+    size = sizeof(value);
     if (RegGetValueW(HKEY_CURRENT_USER, Key, L"MfgPresentThread", RRF_RT_REG_DWORD, nullptr, &value, &size) ==
         ERROR_SUCCESS)
         settings.presentThread = value != 0;
@@ -52,6 +56,7 @@ long Settings::Save() const {
     DWORD generatorValue = static_cast<DWORD>(frameGenerator);
     DWORD multiplierValue = std::clamp(frameMultiplier, 1u, 4u);
     DWORD presentThreadValue = presentThread ? 1 : 0;
+    DWORD nrStageValue = static_cast<DWORD>(nrStage);
     if (error == ERROR_SUCCESS)
         error = RegSetValueExW(key, L"Upscaler", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&upscaleValue),
                                sizeof(upscaleValue));
@@ -64,6 +69,9 @@ long Settings::Save() const {
     if (error == ERROR_SUCCESS)
         error = RegSetValueExW(key, L"MfgPresentThread", 0, REG_DWORD,
                                reinterpret_cast<const BYTE*>(&presentThreadValue), sizeof(presentThreadValue));
+    if (error == ERROR_SUCCESS)
+        error = RegSetValueExW(key, L"NrStage", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&nrStageValue),
+                               sizeof(nrStageValue));
     RegCloseKey(key);
     return error;
 }

@@ -69,4 +69,16 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex, uint3 id : SV_Di
     if (all(id.xy < size)) motion[id.xy] = displacement;
 }
 )";
+// Resamples source-resolution motion to the upscaled resolution for the after-upscaling NR pass.
+inline constexpr char ScaleMotionShader[] = R"(
+Texture2D<float2> source : register(t0);
+RWTexture2D<float2> target : register(u0);
+cbuffer Params : register(b0) { uint2 sourceSize; uint2 targetSize; };
+[numthreads(8,8,1)]
+void main(uint3 id : SV_DispatchThreadID) {
+    if (any(id.xy >= targetSize)) return;
+    uint2 p = min(id.xy * sourceSize / targetSize, sourceSize - 1);
+    target[id.xy] = source.Load(int3(p, 0)) * float2(targetSize) / float2(sourceSize);
+}
+)";
 }
