@@ -28,6 +28,25 @@ int main() {
     Require(selection.upscaler==processing::Upscaler::Fsr,"Changing generation must preserve the upscaler");
     selection.frameMultiplier=1;
     Require(!selection.ManualGeneration(),"Off must bypass all manual generators");
+    for (auto provider : {processing::Upscaler::Dlss, processing::Upscaler::Fsr, processing::Upscaler::Xess}) {
+        selection.upscaler = provider;
+        selection.amdBridge = true;
+        selection.enabled = true;
+        selection.frameMultiplier = 4;
+        auto previous = processing::Upscaler::Dlss;
+        unsigned multiplier = 2;
+        selection.ToggleUpscaling(previous);
+        Require(selection.upscaler == processing::Upscaler::Off && !selection.FsrNative(),
+                "Disabling upscaling must also stop native FSR bridge dispatch");
+        Require(selection.enabled && selection.frameMultiplier == 4, "Upscaling toggle must preserve NR and FG");
+        selection.ToggleGeneration(multiplier);
+        Require(selection.frameMultiplier == 1 && !selection.ManualGeneration(), "FG toggle must bypass generation");
+        selection.ToggleUpscaling(previous);
+        selection.ToggleGeneration(multiplier);
+        Require(selection.upscaler == provider && selection.frameMultiplier == 4,
+                "Toggles must restore the selected provider and multiplier");
+        Require(selection.FsrNative() == (provider == processing::Upscaler::Fsr), "Native bridge must require FSR");
+    }
     Require(ShouldUpscale({1920,1080},{3840,2160},{3840,2160}),"1080p must upscale to a 4K display");
     Require(!ShouldUpscale({3840,2160},{3840,2160},{3840,2160}),"native 4K must bypass DLSS SR");
     Require(!ShouldUpscale({3840,2160},{1920,1080},{1920,1080}),"downscale is not DLSS SR");

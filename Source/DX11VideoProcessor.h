@@ -76,7 +76,13 @@ private:
 	REFERENCE_TIME m_neuralFrameTimestamp = 0;
 	Tex2D_t m_TexNeural; // view of the latest completed NR frame, owned by m_neuralPass
 	bool NeuralSourceSupported() { return !SourceIsHDR() && !m_bVPUseRTXVideoHDR && !m_pPSHalfOUtoInterlace; }
-	bool NeuralActive() { return m_neuralPass.Enabled() && NeuralSourceSupported(); }
+	bool NeuralActive() { return !m_processingSuspended && m_neuralPass.Enabled() && NeuralSourceSupported(); }
+	processing::Upscaler m_lastUpscaler = processing::Upscaler::Dlss;
+	unsigned m_lastFrameMultiplier = 2;
+	bool m_processingSuspended = false; // Ctrl+Alt+R: plain MPC VR output without NR / upscaling / generation
+	std::wstring m_processingMessage;
+	ULONGLONG m_processingMessageUntil = 0;
+	void DrawProcessingMessage(ID3D11Texture2D* pRenderTarget);
 	friend class CVideoRendererInputPin;
 
 	// Direct3D 11
@@ -385,6 +391,9 @@ public:
 	// Render: 1 - render first fied or progressive frame, 2 - render second fied, 0 or other - forced repeat of render.
 	HRESULT Render(int field, const REFERENCE_TIME frameStartTime) override;
 	void PresentGeneratedFrames() override;
+	void ToggleProcessingSuspended() override;
+	void ToggleProcessingFeature(unsigned key) override;
+	void ShowProcessingMessage(const std::wstring& message) override;
 	HRESULT FillBlack() override;
 
 	void SetVideoRect(const CRect& videoRect)      override;

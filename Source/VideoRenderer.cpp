@@ -84,9 +84,23 @@ static const wchar_t g_szClassName[] = L"MPCNeuralRendererWindow";
 LPCWSTR g_pszOldParentWndProc = L"MPCNeuralRenderer.OldParentWndProc";
 LPCWSTR g_pszThis = L"MPCNeuralRenderer.This";
 
+static constexpr int ProcessingHotkeyBase = 0x4e10;
+static constexpr UINT ProcessingHotkeys[] = {'U', 'N', 'G', 'R'};
+static void ProcessingHotkeysActive(HWND hwnd, bool active)
+{
+    for (int i = 0; i < 4; ++i) {
+        UnregisterHotKey(hwnd, ProcessingHotkeyBase + i);
+        KillTimer(hwnd, ProcessingHotkeyBase + i);
+        if (active && !RegisterHotKey(hwnd, ProcessingHotkeyBase + i,
+                MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, ProcessingHotkeys[i]))
+            DLog(L"Processing hotkey registration failed: {}", ProcessingHotkeys[i]);
+    }
+}
+
 static void RemoveParentWndProc(HWND hWnd)
 {
 	DLog(L"RemoveParentWndProc()");
+	ProcessingHotkeysActive(hWnd, false);
 	auto pfnOldProc = GetPropW(hWnd, g_pszOldParentWndProc);
 	if (pfnOldProc) {
 		auto lpPreviousProc = SetWindowLongPtrW(hWnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(pfnOldProc));
@@ -103,10 +117,13 @@ static LRESULT CALLBACK ParentWndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
 {
 	auto pfnOldProc = reinterpret_cast<WNDPROC>(GetPropW(hWnd, g_pszOldParentWndProc));
 	auto pThis = static_cast<CMpcVideoRenderer*>(GetPropW(hWnd, g_pszThis));
-	if (Msg == framegen::PresentMessage() && pThis) return pThis->OnReceiveMessage(hWnd,Msg,wParam,lParam);
+	if ((Msg == framegen::PresentMessage() || ((Msg == WM_HOTKEY || Msg == WM_TIMER) && wParam >= ProcessingHotkeyBase
+		&& wParam < ProcessingHotkeyBase + 4)) && pThis) return pThis->OnReceiveMessage(hWnd,Msg,wParam,lParam);
+	if (Msg == WM_ACTIVATE && pThis) ProcessingHotkeysActive(hWnd, LOWORD(wParam) != WA_INACTIVE);
 
 	switch (Msg) {
 		case WM_DESTROY:
+			ProcessingHotkeysActive(hWnd, false);
 			if (pfnOldProc) {
 				auto lpPreviousProc = SetWindowLongPtrW(hWnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(pfnOldProc));
 				if (lpPreviousProc != 0) {
@@ -1085,6 +1102,7 @@ HRESULT CMpcVideoRenderer::Init(const bool bCreateWindow/* = false*/)
 		if (lpPreviousProc && lpPreviousProc != reinterpret_cast<LONG_PTR>(ParentWndProc)) {
 			SetPropW(m_hWndParentMain, g_pszOldParentWndProc, reinterpret_cast<HANDLE>(lpPreviousProc));
 			SetPropW(m_hWndParentMain, g_pszThis, reinterpret_cast<HANDLE>(this));
+			ProcessingHotkeysActive(m_hWndParentMain, GetForegroundWindow() == m_hWndParentMain);
 		} else {
 			ASSERT(false);
 		}
@@ -1862,6 +1880,21 @@ void CMpcVideoRenderer::DoAfterChangingDevice()
 
 LRESULT CMpcVideoRenderer::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
+    if ((uMsg == WM_HOTKEY || uMsg == WM_TIMER) && wParam >= ProcessingHotkeyBase && wParam < ProcessingHotkeyBase + 4) {
+        KillTimer(hwnd, wParam);
+        if (GetForegroundWindow() != m_hWndParentMain || !m_Sets.bUseD3D11) return 0;
+        // As with generated presentation, never block the UI against synchronous delivery messages.
+        if (!m_InterfaceLock.TryLock()) { SetTimer(hwnd, wParam, 30, nullptr); return 0; }
+        auto unlock = [](CCritSec* lock) { lock->Unlock(); };
+        std::unique_ptr<CCritSec, decltype(unlock)> interfaceLock(&m_InterfaceLock, unlock);
+        if (!m_RendererLock.TryLock()) { SetTimer(hwnd, wParam, 30, nullptr); return 0; }
+        std::unique_ptr<CCritSec, decltype(unlock)> rendererLock(&m_RendererLock, unlock);
+        if (m_VideoProcessor) {
+            m_VideoProcessor->ToggleProcessingFeature(ProcessingHotkeys[wParam - ProcessingHotkeyBase]);
+            Redraw();
+        }
+        return 0;
+    }
 	if (uMsg == framegen::PresentMessage()) {
 		// Never block the player's UI while a delivery thread might be sending it a synchronous message.
 		if (!m_InterfaceLock.TryLock()) {

@@ -10,10 +10,24 @@ enum class NrStage : unsigned {
 };
 struct Settings {
     bool enabled = false;
+    bool amdBridge = false; // Experimental AMDLSS5: dispatch FSR even at 1:1 resolution.
+    bool FsrNative() const { return amdBridge && upscaler == processing::Upscaler::Fsr; }
     int intensity = 50;
     NrStage nrStage = NrStage::BeforeUpscale;
     processing::Upscaler upscaler = processing::Upscaler::Dlss;
     processing::FrameGenerator frameGenerator = processing::FrameGenerator::Dlss;
+    void ToggleUpscaling(processing::Upscaler& previous) {
+        if (upscaler != processing::Upscaler::Off) {
+            previous = upscaler;
+            upscaler = processing::Upscaler::Off;
+        } else upscaler = previous;
+    }
+    void ToggleGeneration(unsigned& previous) {
+        if (frameMultiplier > 1) {
+            previous = frameMultiplier;
+            frameMultiplier = 1;
+        } else frameMultiplier = previous;
+    }
     bool ManualGeneration() const { return frameMultiplier > 1 && frameGenerator != processing::FrameGenerator::Xess; }
     unsigned frameMultiplier = 1;
     // Present DLSS / FSR generated frames from a dedicated thread with a queued schedule.

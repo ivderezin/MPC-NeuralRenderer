@@ -161,6 +161,7 @@
 #define IDC_FRAME_GENERATOR             1075
 #define IDC_MFG_PRESENT_THREAD          1076
 #define IDC_NR_STAGE                    1077
+#define IDC_AMD_BRIDGE                  1078
 
 // Next default values for new objects
 // 

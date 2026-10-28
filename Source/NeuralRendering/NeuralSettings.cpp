@@ -38,6 +38,9 @@ Settings Settings::Load() {
     if (RegGetValueW(HKEY_CURRENT_USER, Key, L"MfgPresentThread", RRF_RT_REG_DWORD, nullptr, &value, &size) ==
         ERROR_SUCCESS)
         settings.presentThread = value != 0;
+    size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER, Key, L"AmdBridge", RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS)
+        settings.amdBridge = value != 0;
     return settings;
 }
 long Settings::Save() const {
@@ -72,6 +75,9 @@ long Settings::Save() const {
     if (error == ERROR_SUCCESS)
         error = RegSetValueExW(key, L"NrStage", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&nrStageValue),
                                sizeof(nrStageValue));
+    DWORD bridgeValue = amdBridge ? 1 : 0;
+    if (error == ERROR_SUCCESS)
+        error = RegSetValueExW(key, L"AmdBridge", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&bridgeValue), sizeof(bridgeValue));
     RegCloseKey(key);
     return error;
 }

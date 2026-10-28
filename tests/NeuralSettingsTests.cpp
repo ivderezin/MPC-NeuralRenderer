@@ -54,12 +54,16 @@ int main() {
                 settings.frameGenerator = generator;
                 settings.frameMultiplier = 4;
                 settings.enabled = true;
+                settings.amdBridge = generator == FrameGenerator::Fsr;
                 settings.intensity = 200;
                 settings.presentThread = generator == FrameGenerator::Fsr;
                 settings.nrStage = static_cast<neural::NrStage>(static_cast<unsigned>(upscaler) % 3);
                 Require(settings.Save() == ERROR_SUCCESS, "Save failed");
                 Require(neural::Settings::Load() == settings, "Independent provider settings did not survive reload");
+                Require(settings.FsrNative() == (upscaler == Upscaler::Fsr && generator == FrameGenerator::Fsr),
+                        "Native FSR must require both the bridge option and FSR provider");
             }
+        Require(settings.FsrNative() == (settings.upscaler == Upscaler::Fsr && settings.amdBridge), "Bridge must require FSR");
         registry.Write(L"Upscaler", 99);
         registry.Write(L"FrameGenerator", 99);
         registry.Write(L"FrameMultiplier", 99);

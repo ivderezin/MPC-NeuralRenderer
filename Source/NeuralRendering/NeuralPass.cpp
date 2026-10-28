@@ -357,6 +357,8 @@ struct NeuralPass::Impl {
         else
             message << ((options.upscaler != processing::Upscaler::Off) ? L"not needed (native size / downscale)"
                                                                         : L"Off");
+        if (options.FsrNative())
+            message << L" (AMDLSS5 bridge inputs; external NR unverified)";
         if (options.frameGenerator != processing::FrameGenerator::Xess) {
             message << L"\n" << processing::Name(options.frameGenerator) << L": ";
             if (fgUsable && fgLimitedByDisplay)
@@ -536,13 +538,23 @@ struct NeuralPass::Impl {
             }
         }
         if ((options.upscaler != processing::Upscaler::Off) &&
-            upscaling::ShouldUpscale({width, height}, target, monitor)) {
+            (upscaling::ShouldUpscale({width, height}, target, monitor) || options.FsrNative())) {
             try {
                 scaled.Create(device, device12.Get(), target.width, target.height, DXGI_FORMAT_R8G8B8A8_UNORM);
                 if (options.upscaler == processing::Upscaler::Dlss && !coreInitialized)
                     throw std::runtime_error(std::string(ngxFailure.begin(), ngxFailure.end()));
+                auto runtimeDirectory = directory;
+                if (options.FsrNative()) {
+                    std::array<wchar_t, 32768> executable{};
+                    const auto length = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
+                    if (!length || length >= executable.size())
+                        throw std::runtime_error("Player path unavailable");
+                    const auto playerDirectory = std::filesystem::path(executable.data()).parent_path();
+                    if (std::filesystem::exists(playerDirectory / L"amd_fidelityfx_upscaler_dx12.dll"))
+                        runtimeDirectory = playerDirectory;
+                }
                 superResolution.Create(options.upscaler, device12.Get(), list.Get(), {width, height}, target,
-                                       directory);
+                                       runtimeDirectory);
                 srUsable = true;
             } catch (const std::exception& error) {
                 srFailure = ngx::Message(error);
@@ -550,8 +562,9 @@ struct NeuralPass::Impl {
         }
         if (nrLoaded) {
             // Without an upscaled frame the after-upscaling pass falls back to the source frame.
-            const bool post = srUsable && options.nrStage != NrStage::BeforeUpscale;
-            const bool pre = !srUsable || options.nrStage != NrStage::AfterUpscale;
+            const bool upscaled = srUsable && (target.width > width || target.height > height);
+            const bool post = upscaled && options.nrStage != NrStage::BeforeUpscale;
+            const bool pre = !upscaled || options.nrStage != NrStage::AfterUpscale;
             if (pre) {
                 try {
                     CreateNr(nrPre, width, height);
@@ -962,7 +975,7 @@ ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* 
                                 upscaling::ShouldUpscale(sourceSize, requestedTarget, monitor)
                             ? requestedTarget
                             : sourceSize;
-    if (!settings_.enabled && !settings_.ManualGeneration() &&
+    if (!settings_.enabled && !settings_.ManualGeneration() && !settings_.FsrNative() &&
         (settings_.upscaler == processing::Upscaler::Off || !upscaling::ShouldUpscale(sourceSize, target, monitor))) {
         if (impl_)
             ResetDevice();

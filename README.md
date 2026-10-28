@@ -56,6 +56,23 @@ FSR 3.1 FG поддерживает **2x**. DLSS и XeSS используют д
 - NR выполняется в исходном разрешении, затем выбранный апскейлер увеличивает результат. FSR и XeSS SR получают линейный цвет. DLSS / FSR FG показывают готовые кадры по расписанию рендерера, XeSS FG управляет показом через свой swap chain.
 - NR использует NGX Feature 18. Имя `.ax` содержит `nvngx.dll` для совместимости с проверкой вызывающего модуля в модели 310.8.0.0; патчей памяти и перехватов функций нет.
 
+### Горячие клавиши и AMDLSS5
+
+В активном окне плеера (D3D11, Windows x64):
+
+| Клавиши | Действие |
+|---|---|
+| Ctrl+Alt+U | Включить / выключить выбранный апскейлер |
+| Ctrl+Alt+N | Включить / выключить встроенный NR |
+| Ctrl+Alt+G | Включить / выключить генерацию кадров |
+| Ctrl+Alt+R | Приостановить / возобновить всю нейрообработку |
+
+При повторном включении восстанавливаются последний апскейлер и множитель (по умолчанию DLSS и 2x). Первые три переключения сохраняются в настройках; общая приостановка действует до закрытия рендерера. Видео продолжает заполнять область просмотра с сохранением выбранных плеером пропорций, даже когда апскейлер выключен. Короткое сообщение показывает выбранный режим; фактическую доступность функций смотри в статистике. Сочетания освобождаются, когда окно плеера теряет фокус; занятое другим приложением сочетание может быть недоступно.
+
+**Экспериментальные входы для [AMDLSS5](https://github.com/Wehaveall/AMDLSS5):** установи мод отдельно для `mpc-hc64.exe` через его установщик, выбери **FSR 3.1**, включи **AMDLSS5 bridge: FSR native AA (experimental)** и выключи встроенный NVIDIA NR. Рендерер будет вызывать FSR и при 1:1 (например, 4K → 4K). В этом режиме `amd_fidelityfx_upscaler_dx12.dll` из папки плеера имеет приоритет; если её там нет, используется DLL рядом с фильтром. Внешний NR управляется самим модом: **F10**, меню — **End**; Ctrl+Alt+N управляет только встроенным NR. Ctrl+Alt+U / R прекращают подачу кадров в FSR и внешний NR.
+
+Это подготовка входов для внешнего мода, совместимость с MPC-HC пока не подтверждена. AMDLSS5 заявляет RX 9070 / 9070 XT и D3D12; наш вывод использует D3D11, поэтому перехват FSR и работа оверлея требуют проверки на Radeon. Файлы и код мода не входят в поставку рендерера.
+
 ### Сборка и тесты
 
 1. Установите Visual Studio 2022 с **Desktop development with C++**, MFC, ATL и Windows SDK.
@@ -120,6 +137,23 @@ Frame generation works without upscaling. Seeking, pausing, and resizing reset t
 - Motion vectors are estimated from the image on the GPU, with a search range of ±16 pixels per frame. No depth data is available, so a zero-filled texture is used. Video capture does not carry the game engine's motion vectors or depth.
 - NR runs at the source resolution, followed by the selected upscaler. FSR and XeSS SR receive linear color. DLSS / FSR FG use the renderer's presentation schedule; XeSS FG manages presentation through its own swap chain.
 - NR uses NGX Feature 18. The `.ax` filename contains `nvngx.dll` for compatibility with the calling-module check in model 310.8.0.0; no memory patches or function hooks are used.
+
+### Hotkeys and AMDLSS5
+
+With the player window active (D3D11, Windows x64):
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+Alt+U | Toggle the selected upscaler |
+| Ctrl+Alt+N | Toggle built-in NR |
+| Ctrl+Alt+G | Toggle frame generation |
+| Ctrl+Alt+R | Suspend / resume all neural processing |
+
+Re-enabling restores the last upscaler and multiplier (initially DLSS and 2x). The first three toggles save settings; suspension lasts until the renderer closes. Video keeps filling the viewport according to the player's aspect ratio setting with upscaling off. A brief message reports the selection; statistics show actual availability. Shortcuts are released when the player loses focus; a combination owned by another application may be unavailable.
+
+**Experimental inputs for [AMDLSS5](https://github.com/Wehaveall/AMDLSS5):** install the mod separately for `mpc-hc64.exe` using its installer, select **FSR 3.1**, enable **AMDLSS5 bridge: FSR native AA (experimental)**, and disable built-in NVIDIA NR. FSR will also run at 1:1 (e.g. 4K → 4K). In this mode, `amd_fidelityfx_upscaler_dx12.dll` in the player's folder takes precedence over the DLL beside the filter. External NR uses the mod's **F10** toggle and **End** menu; Ctrl+Alt+N controls built-in NR only. Ctrl+Alt+U / R stop feeding FSR and external NR.
+
+This prepares inputs for an external mod; MPC-HC compatibility is unverified. AMDLSS5 lists RX 9070 / 9070 XT and D3D12; our presentation uses D3D11, so FSR interception and overlay support need Radeon testing. The renderer does not bundle the mod's code or files.
 
 ### Building and testing
 

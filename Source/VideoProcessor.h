@@ -229,6 +229,9 @@ public:
 	virtual HRESULT ProcessSample(IMediaSample* pSample) = 0;
 	virtual HRESULT Render(int field, const REFERENCE_TIME frameStartTime) = 0;
 	virtual void PresentGeneratedFrames() {}
+	virtual void ToggleProcessingSuspended() {}
+	virtual void ToggleProcessingFeature(unsigned) {}
+	virtual void ShowProcessingMessage(const std::wstring&) {}
 	virtual HRESULT FillBlack() = 0;
 
 	void Start() { m_rtStart = 0; }

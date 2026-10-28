@@ -3112,7 +3112,7 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 
 	const auto outputSerial = m_neuralPass.OutputSerial();
 	const auto generatedCount = m_neuralPass.GeneratedCount();
-	if (!m_xessPresenter.Active() && SUCCEEDED(hr) && field && generatedCount && m_pFilter->m_filterState == State_Running) {
+	if (!m_processingSuspended && NeuralActive() && !m_xessPresenter.Active() && SUCCEEDED(hr) && field && generatedCount && m_pFilter->m_filterState == State_Running) {
 		if (outputSerial != m_mfgSerial) {
 			m_mfgPlan.Clear(); m_mfgSerial = outputSerial;
 			LARGE_INTEGER now{}, frequency{};
@@ -3152,6 +3152,7 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 		DrawSubtitles(pBackBuffer);
 	}
 
+	DrawProcessingMessage(pBackBuffer);
 	if (m_bShowStats) {
 		hr = DrawStats(pBackBuffer);
 	}
@@ -3243,10 +3244,10 @@ HRESULT CDX11VideoProcessor::PresentFrame(unsigned syncInterval, bool running)
 	if (!m_xessPresenter.Active()) {
 		hr = m_pDXGISwapChain1->Present(syncInterval, 0);
 	} else {
-		const auto serial = m_neuralPass.OutputSerial();
+		const auto serial = NeuralActive() ? m_neuralPass.OutputSerial() : 0;
 		const auto token = serial ? (serial << 1 | 1) : (static_cast<unsigned long long>(m_neuralFrameTimestamp) << 1);
 		const auto duration = serial ? m_neuralPass.OutputDuration() : m_rtAvgTimePerFrame;
-		hr = m_xessPresenter.Present(syncInterval, running, token,
+		hr = m_xessPresenter.Present(syncInterval, running && !m_processingSuspended, token,
 			static_cast<float>(duration > 0 ? duration : 166667) / 10000.0f);
 	}
 	if (hr == S_OK) m_outputStats.Add(GetPreciseTick());
@@ -3278,6 +3279,7 @@ HRESULT CDX11VideoProcessor::DrawPresentationFrame(ID3D11Texture2D* frame)
 	}
 	hr = DrawProcessedTexture(texture,backBuffer,CRect(0,0,texture.desc.Width,texture.desc.Height),m_videoRect,m_pipelineRotation);
 	if (SUCCEEDED(hr)) DrawSubtitles(backBuffer);
+	if (SUCCEEDED(hr)) DrawProcessingMessage(backBuffer);
 	if (SUCCEEDED(hr) && m_bShowStats) DrawStats(backBuffer);
 	if (SUCCEEDED(hr) && m_bAlphaBitmapEnable) {
 		D3D11_TEXTURE2D_DESC desc{}; backBuffer->GetDesc(&desc);
@@ -3349,6 +3351,63 @@ bool CDX11VideoProcessor::PresentQueuedFrame()
 	return true;
 }
 
+void CDX11VideoProcessor::ToggleProcessingFeature(unsigned key)
+{
+    if (key == 'R') {
+        ToggleProcessingSuspended();
+        return;
+    }
+    auto settings = m_processingSettings;
+    std::wstring message;
+    if (key == 'U') {
+        settings.ToggleUpscaling(m_lastUpscaler);
+        message = std::wstring(L"Upscaling: ") + processing::Name(settings.upscaler);
+    } else if (key == 'N') {
+        settings.enabled = !settings.enabled;
+        message = settings.enabled ? L"NR: on" : L"NR: off";
+        if (settings.FsrNative()) message += L" (external AMD NR: use F10)";
+    } else if (key == 'G') {
+        settings.ToggleGeneration(m_lastFrameMultiplier);
+        message = L"Frame generation: " + std::to_wstring(settings.frameMultiplier) + L"x";
+    } else return;
+    if (settings.Save() != ERROR_SUCCESS) {
+        ShowProcessingMessage(L"Could not save processing settings");
+        return;
+    }
+    Configure(m_pFilter->m_Sets);
+    if (m_processingSuspended) message += L" (processing suspended)";
+    ShowProcessingMessage(message);
+}
+
+void CDX11VideoProcessor::ToggleProcessingSuspended()
+{
+	StopMfgPresentation();
+	m_processingSuspended = !m_processingSuspended;
+	m_neuralPass.ClearHistory();
+	m_xessPresenter.ClearHistory();
+	UpdateTexures(); // D3D11 VP may scale directly again while processing is suspended
+	ShowProcessingMessage(m_processingSuspended ? L"Neural processing: off" : L"Neural processing: on");
+}
+
+void CDX11VideoProcessor::ShowProcessingMessage(const std::wstring& message)
+{
+	m_processingMessage = message;
+	m_processingMessageUntil = GetTickCount64() + 2000;
+}
+
+void CDX11VideoProcessor::DrawProcessingMessage(ID3D11Texture2D* pRenderTarget)
+{
+	if (m_processingMessage.empty() || GetTickCount64() > m_processingMessageUntil || m_windowRect.IsRectEmpty()) {
+		return;
+	}
+	CComPtr<ID3D11RenderTargetView> pRenderTargetView;
+	if (SUCCEEDED(m_pDevice->CreateRenderTargetView(pRenderTarget, nullptr, &pRenderTargetView))) {
+		const SIZE rtSize = m_windowRect.Size();
+		m_Font3D.Draw2DText(pRenderTargetView, rtSize, 20.0f, static_cast<float>(rtSize.cy - 60),
+			D3DCOLOR_XRGB(255, 255, 128), m_processingMessage.c_str());
+	}
+}
+
 HRESULT CDX11VideoProcessor::FillBlack()
 {
 	StopMfgPresentation();
@@ -3372,6 +3431,7 @@ HRESULT CDX11VideoProcessor::FillBlack()
 	m_pDeviceContext->ClearRenderTargetView(pRenderTargetView, ClearColor);
 	pRenderTargetView->Release();
 
+	DrawProcessingMessage(pBackBuffer);
 	if (m_bShowStats) {
 		hr = DrawStats(pBackBuffer);
 	}
@@ -3414,8 +3474,7 @@ void CDX11VideoProcessor::UpdateTexures()
 	HRESULT hr = S_OK;
 
 	if (m_D3D11VP.IsReady()) {
-		if (m_bVPScaling && !NeuralActive() && m_videoRect.Width() <= static_cast<int>(m_srcRectWidth)
-			&& m_videoRect.Height() <= static_cast<int>(m_srcRectHeight)) {
+		if (m_bVPScaling && !NeuralActive()) {
 			CSize texsize = m_videoRect.Size();
 			hr = m_TexConvertOutput.CheckCreate(m_pDevice, m_D3D11OutputFmt, texsize.cx, texsize.cy, Tex2D_DefaultShaderRTarget);
 			if (FAILED(hr)) {
@@ -3834,7 +3893,7 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 
 	// Neural rendering runs on the source-resolution frame, so D3D11 VP must not scale directly to the target.
 	const bool bNeural = NeuralActive();
-	if (m_neuralPass.Enabled() && !bNeural) {
+	if (!m_processingSuspended && m_neuralPass.Enabled() && !bNeural) {
 		m_neuralPass.Bypass(L"Bypass: SDR source required");
 	}
 
@@ -3844,8 +3903,7 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 				(m_TexConvertOutput.desc.Width != dstRect.Width() || m_TexConvertOutput.desc.Height != dstRect.Height() || m_bFlip
 				|| dstRect.right > m_windowRect.right || dstRect.bottom > m_windowRect.bottom)
 				|| (m_bHdrPassthroughSupport && (m_bHdrPassthrough || m_bHdrLocalToneMapping)); // At least on Nvidia we can sometimes get the "D3D11: Removing Device" error here when HDR Passthrough.
-			if (!bNeedShaderTransform && !numSteps && !bNeural
-				&& dstRect.Width() <= srcRect.Width() && dstRect.Height() <= srcRect.Height()) {
+			if (!bNeedShaderTransform && !numSteps && !bNeural) {
 				m_bVPScalingUseShaders = false;
 				hr = D3D11VPPass(pRenderTarget, rSrc, dstRect, second);
 
@@ -3895,14 +3953,6 @@ HRESULT CDX11VideoProcessor::DrawProcessedTexture(Tex2D_t& input, ID3D11Texture2
 	HRESULT hr = S_OK;
 	Tex2D_t* pInputTexture = &input;
 	const auto numSteps = GetPostScaleSteps();
-	// Keep native pixels centered until the selected upscaler produces a result.
-	if (dstRect.Width() > rSrc.Width() || dstRect.Height() > rSrc.Height()) {
-		const double scale = std::min({1.0, static_cast<double>(dstRect.Width())/rSrc.Width(), static_cast<double>(dstRect.Height())/rSrc.Height()});
-		const int width = static_cast<int>(rSrc.Width()*scale), height = static_cast<int>(rSrc.Height()*scale);
-		const int left = dstRect.left + (dstRect.Width()-width)/2, top = dstRect.top + (dstRect.Height()-height)/2;
-		dstRect.SetRect(left,top,left+width,top+height);
-	}
-
 	if (numSteps) {
 		UINT step = 0;
 		Tex2D_t* pTex = m_TexsPostScale.GetFirstTex();
@@ -5027,7 +5077,8 @@ HRESULT CDX11VideoProcessor::DrawStats(ID3D11Texture2D* pRenderTarget)
 	std::wstring str;
 	str.reserve(700);
 	str.assign(m_strStatsHeader);
-	str.append(L"\n" + m_neuralPass.Status());
+	str.append(m_processingSuspended ? std::wstring(L"\nNeural processing: suspended (Ctrl+Alt+R)")
+		: L"\n" + m_neuralPass.Status());
 	if (m_processingSettings.frameGenerator == processing::FrameGenerator::Xess && m_processingSettings.frameMultiplier > 1) {
 		str += L"\n" + (m_xessPresenter.Status().empty()
 			? std::wstring(L"XeSS FG: requires windowed SDR / 8-bit output") : m_xessPresenter.Status());
