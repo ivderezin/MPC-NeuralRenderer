@@ -270,12 +270,12 @@ int main() {
         gpu.context->CSSetSamplers(0,1,&sampleState);
         std::vector<float> invented(13*11*4,.9f), plain(7*5*4,.25f);
         auto up=gpu.Texture(13,11,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,invented.data(),13*16);
-        auto original=gpu.Texture(7,5,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,plain.data(),7*16);
+        auto spatialInput=gpu.Texture(7,5,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,plain.data(),7*16);
         auto adaptiveOutput=gpu.Texture(13,11,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
         for (float d : {0.f,1.f}) {
             std::vector<float> maskValues(7*5,d);
             auto mask=gpu.Texture(7,5,DXGI_FORMAT_R32_FLOAT,D3D11_BIND_SHADER_RESOURCE,maskValues.data(),7*4);
-            gpu.Dispatch(adaptiveShader.Get(),up,&original,adaptiveOutput,13,11,0,0,0,false,nullptr,&mask);
+            gpu.Dispatch(adaptiveShader.Get(),up,&spatialInput,adaptiveOutput,13,11,0,0,0,false,nullptr,&mask);
             const auto result=gpu.Read(adaptiveOutput,4);
             for (size_t k=0;k<result.size();k+=4)
                 Require(std::abs(result[k]-(d==0 ? .9f : .25f))<.0001f,
