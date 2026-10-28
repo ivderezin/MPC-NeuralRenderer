@@ -1843,7 +1843,7 @@ HRESULT CDX11VideoProcessor::InitSwapChain(bool bWindowChanged)
 				hr = m_xessPresenter.Create(m_pDevice, m_pDeviceContext, m_pDXGIFactory2, m_hWnd, desc1,
 					m_processingSettings.frameMultiplier, m_neuralRefreshHz,
 					static_cast<float>(m_rtAvgTimePerFrame > 0 ? m_rtAvgTimePerFrame : 166667) / 10000.0f,
-					processing::ModuleDirectory(), &m_pDXGISwapChain1);
+					processing::ModuleDirectory(), &m_pDXGISwapChain1, m_processingSettings.motionMethod == neural::MotionMethod::EchoStorm);
 				if (SUCCEEDED(hr)) desc1.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 			} catch (...) { hr = E_FAIL; }
 		}
@@ -4521,7 +4521,8 @@ void CDX11VideoProcessor::Configure(const Settings_t& config)
 	const bool changePresenter = (previousProcessing.frameGenerator == processing::FrameGenerator::Xess
 		|| m_processingSettings.frameGenerator == processing::FrameGenerator::Xess)
 		&& (previousProcessing.frameGenerator != m_processingSettings.frameGenerator
-			|| previousProcessing.frameMultiplier != m_processingSettings.frameMultiplier);
+			|| previousProcessing.frameMultiplier != m_processingSettings.frameMultiplier
+            || previousProcessing.motionMethod != m_processingSettings.motionMethod);
 	m_neuralPass.Configure(m_processingSettings);
 	m_neuralPass.ClearHistory();
 	m_xessPresenter.ClearHistory();

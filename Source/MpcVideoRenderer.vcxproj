@@ -143,6 +143,9 @@
     <ClInclude Include="NeuralRendering\FrameHistory.h" />
     <ClInclude Include="NeuralRendering\AsyncOutput.h" />
     <ClInclude Include="NeuralRendering\MotionShaders.h" />
+    <ClInclude Include="NeuralRendering\MotionEstimator.h" />
+    <ClInclude Include="NeuralRendering\EchoMotionShaders.h" />
+    <ClCompile Include="NeuralRendering\MotionEstimator.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClInclude Include="Ngx\Feature.h" />
     <ClInclude Include="Upscaling\UpscalePolicy.h" />
     <ClInclude Include="Upscaling\DlssSuperResolution.h" />

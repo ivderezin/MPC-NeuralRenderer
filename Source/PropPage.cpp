@@ -93,6 +93,7 @@ void CVRMainPPage::SetControls()
 	ComboBox_SelectByItemData(m_hWnd, IDC_NR_STAGE, static_cast<unsigned>(m_neuralSettings.nrStage));
 	CheckDlgButton(IDC_MFG_PRESENT_THREAD, m_neuralSettings.presentThread ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_AMD_BRIDGE, m_neuralSettings.amdBridge ? BST_CHECKED : BST_UNCHECKED);
+	ComboBox_SelectByItemData(m_hWnd, IDC_MOTION_METHOD, static_cast<unsigned>(m_neuralSettings.motionMethod));
 	ComboBox_SelectByItemData(m_hWnd, IDC_NEURAL_INTENSITY, m_neuralSettings.intensity);
 
 	CheckDlgButton(IDC_CHECK1, m_SetsPP.bUseD3D11             ? BST_CHECKED : BST_UNCHECKED);
@@ -163,6 +164,7 @@ void CVRMainPPage::EnableControls()
 	GetDlgItem(IDC_DLSS_MFG).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_MFG_PRESENT_THREAD).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_AMD_BRIDGE).EnableWindow(neuralAvailable);
+	GetDlgItem(IDC_MOTION_METHOD).EnableWindow(neuralAvailable);
     for (int id : {IDC_SHADER_PRE_ADD, IDC_SHADER_PRE_CLEAR, IDC_SHADER_POST_ADD, IDC_SHADER_POST_CLEAR})
         GetDlgItem(id).EnableWindow(m_SetsPP.bUseD3D11);
 	GetDlgItem(IDC_NEURAL_INTENSITY).EnableWindow(neuralAvailable && m_neuralSettings.enabled);
@@ -242,6 +244,8 @@ HRESULT CVRMainPPage::OnActivate()
 	// set m_hWnd for CWindow
 	m_hWnd = m_hwnd;
 	m_neuralSettings = neural::Settings::Load();
+    for (auto method : {neural::MotionMethod::Fast, neural::MotionMethod::EchoStorm})
+        ComboBox_AddStringData(m_hWnd, IDC_MOTION_METHOD, neural::Name(method), static_cast<unsigned>(method));
 	SendDlgItemMessageW(IDC_UPSCALER, CB_RESETCONTENT, 0, 0);
 	for (auto provider : {processing::Upscaler::Off, processing::Upscaler::Dlss, processing::Upscaler::Fsr, processing::Upscaler::Xess})
 		ComboBox_AddStringData(m_hWnd, IDC_UPSCALER, processing::Name(provider), static_cast<unsigned>(provider));
@@ -551,6 +555,10 @@ INT_PTR CVRMainPPage::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 		}
 
 		if (action == CBN_SELCHANGE) {
+            if (nID == IDC_MOTION_METHOD) {
+                m_neuralSettings.motionMethod = static_cast<neural::MotionMethod>(ComboBox_GetCurItemData(m_hWnd, IDC_MOTION_METHOD));
+                SetDirty(); return (LRESULT)1;
+            }
 			if (nID == IDC_NR_STAGE) {
 				m_neuralSettings.nrStage = static_cast<neural::NrStage>(ComboBox_GetCurItemData(m_hWnd, IDC_NR_STAGE));
 				SetDirty(); return (LRESULT)1;

@@ -166,6 +166,7 @@
 #define IDC_SHADER_PRE_CLEAR            1080
 #define IDC_SHADER_POST_ADD             1081
 #define IDC_SHADER_POST_CLEAR           1082
+#define IDC_MOTION_METHOD               1083
 
 // Next default values for new objects
 // 
@@ -173,7 +174,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        106
 #define _APS_NEXT_COMMAND_VALUE         40001
-#define _APS_NEXT_CONTROL_VALUE         1078
+#define _APS_NEXT_CONTROL_VALUE         1084
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

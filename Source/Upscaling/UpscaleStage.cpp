@@ -98,10 +98,10 @@ struct UpscaleStage::Impl {
             throw std::runtime_error("No upscaler selected");
     }
     void Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motion,
-                  ID3D12Resource* output, bool reset, float frameTimeMs) {
+                  ID3D12Resource* output, bool reset, float frameTimeMs, ID3D12Resource* distrust) {
         using namespace processing;
         if (provider == Upscaler::Dlss) {
-            ngx::Check(dlss.Evaluate(list, color, depth, motion, output, reset, frameTimeMs), "Evaluate DLSS SR");
+            ngx::Check(dlss.Evaluate(list, color, depth, motion, output, reset, frameTimeMs, distrust), "Evaluate DLSS SR");
             return;
         }
         Transition(list, inputLinear.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -172,8 +172,8 @@ void UpscaleStage::Create(processing::Upscaler provider, ID3D12Device* device, I
     impl_->Create(device, list, directory);
 }
 void UpscaleStage::Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* color, ID3D12Resource* depth,
-                            ID3D12Resource* motion, ID3D12Resource* output, bool reset, float frameTimeMs) {
-    impl_->Dispatch(list, color, depth, motion, output, reset, frameTimeMs);
+                            ID3D12Resource* motion, ID3D12Resource* output, bool reset, float frameTimeMs, ID3D12Resource* distrust) {
+    impl_->Dispatch(list, color, depth, motion, output, reset, frameTimeMs, distrust);
 }
 }
 #endif

@@ -19,9 +19,10 @@ void DlssSuperResolution::Create(ID3D12GraphicsCommandList* list, Extent source,
     if (!handle_) throw std::runtime_error("DLSS SR returned no handle");
 }
 NVSDK_NGX_Result DlssSuperResolution::Evaluate(ID3D12GraphicsCommandList* list, ID3D12Resource* color,
-    ID3D12Resource* depth, ID3D12Resource* motion, ID3D12Resource* output, bool reset, float frameTimeMs) {
+    ID3D12Resource* depth, ID3D12Resource* motion, ID3D12Resource* output, bool reset, float frameTimeMs, ID3D12Resource* distrust) {
     NVSDK_NGX_D3D12_DLSS_Eval_Params evaluate{};
     evaluate.Feature.pInColor = color; evaluate.Feature.pInOutput = output;
+    evaluate.pInBiasCurrentColorMask = distrust;
     evaluate.pInDepth = depth; evaluate.pInMotionVectors = motion;
     evaluate.InRenderSubrectDimensions = {source_.width, source_.height};
     evaluate.InMVScaleX = evaluate.InMVScaleY = 1;
