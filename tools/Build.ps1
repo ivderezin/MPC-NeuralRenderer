@@ -14,4 +14,7 @@ Copy-Item (Join-Path $root 'README.md'), (Join-Path $root 'LICENSE.txt') $output
 Copy-Item (Join-Path $root 'distrib/Install_MPCVR_64.cmd'), (Join-Path $root 'distrib/Uninstall_MPCVR_64.cmd') $output
 Copy-Item (Join-Path $root 'deps/vendors/runtime/*.dll') $output
 Copy-Item (Join-Path $root 'deps/vendors/licenses/*') $output
+$imageOutput = Join-Path $output 'docs/images'
+New-Item -ItemType Directory -Force $imageOutput | Out-Null
+Copy-Item (Join-Path $root 'docs/images/*.jpg') $imageOutput
 Write-Host "Renderer ready: $output"

@@ -32,4 +32,5 @@ jobs:
             _bin/Filter_x64/*.cmd
             _bin/Filter_x64/*.md
             _bin/Filter_x64/LICENSE.txt
+            _bin/Filter_x64/docs/images/*.jpg
           if-no-files-found: error
