@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include <dxgiformat.h>
 namespace neural {
+// RGB textures sampled by PrepareShader; HDR transfer functions are checked separately by the caller.
+inline constexpr bool IsSdrInputFormat(DXGI_FORMAT format) {
+    return format == DXGI_FORMAT_R8G8B8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+           format == DXGI_FORMAT_R10G10B10A2_UNORM || format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+}
 inline constexpr char PrepareShader[] = R"(
 Texture2D<float4> source : register(t0);
 RWTexture2D<float4> color : register(u0);

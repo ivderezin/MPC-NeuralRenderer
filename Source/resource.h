@@ -162,6 +162,10 @@
 #define IDC_MFG_PRESENT_THREAD          1076
 #define IDC_NR_STAGE                    1077
 #define IDC_AMD_BRIDGE                  1078
+#define IDC_SHADER_PRE_ADD              1079
+#define IDC_SHADER_PRE_CLEAR            1080
+#define IDC_SHADER_POST_ADD             1081
+#define IDC_SHADER_POST_CLEAR           1082
 
 // Next default values for new objects
 // 

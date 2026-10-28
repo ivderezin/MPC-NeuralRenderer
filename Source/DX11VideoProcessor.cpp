@@ -694,6 +694,7 @@ void CDX11VideoProcessor::ReleaseVP()
 	m_TexConvertOutput.Release();
 	m_TexResize.Release();
 	m_TexsPostScale.Release();
+	for (auto& texture : m_TexPreScale) texture.Release();
 
 	m_PSConvColorData.Release();
 	m_pDoviCurvesConstantBuffer.Release();
@@ -3474,7 +3475,7 @@ void CDX11VideoProcessor::UpdateTexures()
 	HRESULT hr = S_OK;
 
 	if (m_D3D11VP.IsReady()) {
-		if (m_bVPScaling && !NeuralActive()) {
+		if (m_bVPScaling && !NeuralActive() && m_pPreScaleShaders.empty()) {
 			CSize texsize = m_videoRect.Size();
 			hr = m_TexConvertOutput.CheckCreate(m_pDevice, m_D3D11OutputFmt, texsize.cx, texsize.cy, Tex2D_DefaultShaderRTarget);
 			if (FAILED(hr)) {
@@ -3894,7 +3895,9 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 	// Neural rendering runs on the source-resolution frame, so D3D11 VP must not scale directly to the target.
 	const bool bNeural = NeuralActive();
 	if (!m_processingSuspended && m_neuralPass.Enabled() && !bNeural) {
-		m_neuralPass.Bypass(L"Bypass: SDR source required");
+        m_neuralPass.Bypass(m_pPSHalfOUtoInterlace ? L"Bypass: stereo conversion unsupported"
+            : m_bVPUseRTXVideoHDR ? L"Bypass: RTX Video HDR neural processing unsupported"
+            : L"Bypass: HDR neural processing unsupported (SDR input required)");
 	}
 
 	if (m_D3D11VP.IsReady()) {
@@ -3903,7 +3906,7 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 				(m_TexConvertOutput.desc.Width != dstRect.Width() || m_TexConvertOutput.desc.Height != dstRect.Height() || m_bFlip
 				|| dstRect.right > m_windowRect.right || dstRect.bottom > m_windowRect.bottom)
 				|| (m_bHdrPassthroughSupport && (m_bHdrPassthrough || m_bHdrLocalToneMapping)); // At least on Nvidia we can sometimes get the "D3D11: Removing Device" error here when HDR Passthrough.
-			if (!bNeedShaderTransform && !numSteps && !bNeural) {
+			if (!bNeedShaderTransform && !numSteps && !bNeural && m_pPreScaleShaders.empty()) {
 				m_bVPScalingUseShaders = false;
 				hr = D3D11VPPass(pRenderTarget, rSrc, dstRect, second);
 
@@ -3925,6 +3928,26 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 	else {
 		pInputTexture = &m_TexSrcVideo;
 	}
+
+    if (!m_pPreScaleShaders.empty()) {
+        const CRect rect(0, 0, rSrc.Width(), rSrc.Height());
+        const PS_EXTSHADER_CONSTANTS constants = {
+            {1.0f / pInputTexture->desc.Width, 1.0f / pInputTexture->desc.Height},
+            {static_cast<float>(pInputTexture->desc.Width), static_cast<float>(pInputTexture->desc.Height)},
+            m_preShaderFrame++, static_cast<float>(GetTickCount64() % 600000) / 1000.0f, 0, 0
+        };
+        m_pDeviceContext->UpdateSubresource(m_pPostScaleConstants, 0, nullptr, &constants, 0, 0);
+        for (size_t index = 0; index < m_pPreScaleShaders.size(); ++index) {
+            auto& target = m_TexPreScale[index % 2];
+            hr = target.CheckCreate(m_pDevice, m_InternalTexFmt, rect.Width(), rect.Height(), Tex2D_DefaultShaderRTarget);
+            if (FAILED(hr)) return hr;
+            hr = TextureCopyRect(*pInputTexture, target.pTexture, rSrc, rect,
+                m_pPreScaleShaders[index].shader, m_pPostScaleConstants, 0, false);
+            if (FAILED(hr)) return hr;
+            pInputTexture = &target;
+            rSrc = rect;
+        }
+    }
 
 	if (bNeural) {
 		if (auto* texture = m_neuralPass.Process(m_pDevice, m_pDeviceContext, pInputTexture->pTexture, rSrc, m_neuralFrameTimestamp, true,
@@ -4786,6 +4809,8 @@ void CDX11VideoProcessor::ClearPreScaleShaders()
 		pExtShader.shader.Release();
 	}
 	m_pPreScaleShaders.clear();
+	for (auto& texture : m_TexPreScale) texture.Release();
+	m_neuralPass.ClearHistory();
 	DLog(L"CDX11VideoProcessor::ClearPreScaleShaders().");
 }
 
@@ -4796,13 +4821,11 @@ void CDX11VideoProcessor::ClearPostScaleShaders()
 		pExtShader.shader.Release();
 	}
 	m_pPostScaleShaders.clear();
-	//UpdateStatsPostProc();
 	DLog(L"CDX11VideoProcessor::ClearPostScaleShaders().");
 }
 
 HRESULT CDX11VideoProcessor::AddPreScaleShader(const std::wstring& name, const std::string& srcCode)
 {
-#ifdef _DEBUG
 	if (!m_pDevice) {
 		return E_ABORT;
 	}
@@ -4814,7 +4837,8 @@ HRESULT CDX11VideoProcessor::AddPreScaleShader(const std::wstring& name, const s
 		hr = m_pDevice->CreatePixelShader(pShaderCode->GetBufferPointer(), pShaderCode->GetBufferSize(), nullptr, &m_pPreScaleShaders.back().shader);
 		if (S_OK == hr) {
 			m_pPreScaleShaders.back().name = name;
-			//UpdatePreScaleTexures(); //TODO
+			UpdateTexures();
+			m_neuralPass.ClearHistory();
 			DLog(L"CDX11VideoProcessor::AddPreScaleShader() : \"{}\" pixel shader added successfully.", name);
 		}
 		else {
@@ -4824,14 +4848,7 @@ HRESULT CDX11VideoProcessor::AddPreScaleShader(const std::wstring& name, const s
 		pShaderCode->Release();
 	}
 
-	if (S_OK == hr && m_D3D11VP.IsReady() && m_bVPScaling) {
-		return S_FALSE;
-	}
-
 	return hr;
-#else
-	return E_NOTIMPL;
-#endif
 }
 
 HRESULT CDX11VideoProcessor::AddPostScaleShader(const std::wstring& name, const std::string& srcCode)

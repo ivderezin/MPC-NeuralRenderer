@@ -111,6 +111,8 @@ private:
 	Tex2D_t m_TexConvertOutput;
 	Tex2D_t m_TexResize;        // for intermediate result of two-pass resize
 	CTex2DRing m_TexsPostScale;
+	Tex2D_t m_TexPreScale[2]; // Source-sized ping-pong targets for external pre-resize shaders
+	uint32_t m_preShaderFrame = 0;
 	Tex2D_t m_TexDither;
 
 	// for GetAlignmentSize()

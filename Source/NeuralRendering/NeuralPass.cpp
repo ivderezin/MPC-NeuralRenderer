@@ -992,8 +992,10 @@ ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* 
         Bypass(L"Bypass: SDR source required");
         return nullptr;
     }
-    if (desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
-        Bypass(L"Bypass: 8-bit internal format required");
+    // PrepareShader samples normalized RGB and converts it into the 8-bit SDR model input.
+    // Source bit depth is independent of transfer function: 10-bit SDR is valid here.
+    if (!IsSdrInputFormat(desc.Format)) {
+        Bypass(L"Bypass: unsupported RGB internal format");
         return nullptr;
     }
     if (rect.left < 0 || rect.top < 0 || rect.right > static_cast<LONG>(desc.Width) ||

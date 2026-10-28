@@ -51,10 +51,19 @@ FSR 3.1 FG поддерживает **2x**. DLSS и XeSS используют д
 
 ### Данные видео
 
-- Обработка доступна для Windows x64 и SDR. Для NR и апскейла нужен 8-битный внутренний формат; HDR и стереопреобразование обходят эти стадии.
+- Нейрообработка доступна для Windows x64 и SDR, включая 10-битные SDR-видео и внутренние RGB-текстуры 8-bit / RGB10A2 / float16. Перед NR, SR и DLSS/FSR FG RGB нормализуется в 8-битный SDR-вход модели: исходная 10-битная точность на этом этапе не сохраняется.
+- HDR (PQ/HLG/Dolby Vision), RTX Video HDR и стереопреобразование пока обходят нейрообработку. Это ограничение текущего цветового пайплайна, а не ограничение разрядности входного видео. Статистика показывает конкретную причину обхода. Отключение HDR passthrough само по себе не включает нейрообработку HDR-источника. XeSS FG по-прежнему требует 8-битного SDR swap chain.
 - Векторы движения оцениваются по изображению на GPU, поиск ограничен ±16 пикселями за кадр. Данных о глубине нет — используется нулевая текстура. Векторы и глубина игрового движка через видеозахват не передаются.
 - NR выполняется в исходном разрешении, затем выбранный апскейлер увеличивает результат. FSR и XeSS SR получают линейный цвет. DLSS / FSR FG показывают готовые кадры по расписанию рендерера, XeSS FG управляет показом через свой swap chain.
 - NR использует NGX Feature 18. Имя `.ax` содержит `nvngx.dll` для совместимости с проверкой вызывающего модуля в модели 310.8.0.0; патчей памяти и перехватов функций нет.
+
+### Пиксельные шейдеры
+
+В свойствах **MPC Neural Renderer → Pixel shaders** доступны **Add pre-resize…**, **Add post-resize…** и **Clear** для каждого этапа. Открой видео, выбери самостоятельный HLSL-файл (UTF-8, `main`, `ps_4_0`). Добавление дописывает шейдер в цепочку; Clear очищает выбранную цепочку. Изменения применяются сразу, включая при нажатии Cancel в свойствах, и действуют до пересоздания графа/устройства; пресеты в плеере они не сохраняют. Доступно в D3D11.
+
+Pre-resize выполняется после преобразования видео в RGB, перед NR и апскейлом; post-resize — после масштабирования и встроенных цветовых коррекций. Обычные пиксельные шейдеры продолжают работать и при обходе нейрообработки HDR. При HDR шейдер должен учитывать цветовое пространство своего этапа.
+
+Меню **Pre-Resize / Post-Resize Pixel Shaders** самого MPC-HC зависит от выбранного в плеере типа рендерера и его адаптера. Установка нашего фильтра через External Filters не подключает встроенный адаптер MPC-VR, поэтому это меню может быть недоступно. Эксклюзивного захвата этапов рендерер не требует: для внешнего фильтра используй кнопки в его свойствах.
 
 ### Горячие клавиши и AMDLSS5
 
@@ -133,10 +142,19 @@ Frame generation works without upscaling. Seeking, pausing, and resizing reset t
 
 ### Video inputs and processing
 
-- Processing is available on Windows x64 for SDR. NR and upscaling require an 8-bit internal format; HDR and stereo conversion bypass these stages.
+- Neural processing supports Windows x64 SDR, including 10-bit SDR video and 8-bit / RGB10A2 / float16 RGB internal textures. Before NR, SR, and DLSS/FSR FG, RGB is normalized into an 8-bit SDR model input; original 10-bit precision is not retained at that stage.
+- HDR (PQ/HLG/Dolby Vision), RTX Video HDR, and stereo conversion still bypass neural processing. This is a limitation of the current colour pipeline, independent of source bit depth. Statistics show the specific bypass reason. Disabling HDR passthrough alone does not enable neural processing for an HDR source. XeSS FG still requires an 8-bit SDR swap chain.
 - Motion vectors are estimated from the image on the GPU, with a search range of ±16 pixels per frame. No depth data is available, so a zero-filled texture is used. Video capture does not carry the game engine's motion vectors or depth.
 - NR runs at the source resolution, followed by the selected upscaler. FSR and XeSS SR receive linear color. DLSS / FSR FG use the renderer's presentation schedule; XeSS FG manages presentation through its own swap chain.
 - NR uses NGX Feature 18. The `.ax` filename contains `nvngx.dll` for compatibility with the calling-module check in model 310.8.0.0; no memory patches or function hooks are used.
+
+### Pixel shaders
+
+Open **MPC Neural Renderer properties → Pixel shaders** for **Add pre-resize…**, **Add post-resize…**, and **Clear** for each stage. Open a video first, then choose a standalone HLSL file (UTF-8, `main`, `ps_4_0`). Add appends to the chain; Clear removes that stage's chain. Changes apply immediately, including when cancelling the properties dialog, and last until the graph/device is recreated; they are not saved as player presets. D3D11 only.
+
+Pre-resize runs after RGB conversion, before NR and upscaling; post-resize runs after scaling and built-in colour corrections. Ordinary pixel shaders still run while HDR neural processing is bypassed. HDR shaders must account for their stage's colour space.
+
+MPC-HC's own **Pre-Resize / Post-Resize Pixel Shaders** menu depends on its configured renderer type and adapter. Loading our filter through External Filters does not attach the built-in MPC-VR adapter, so that menu can be unavailable. The renderer does not require exclusive control of these stages; use its property-page buttons in external-filter mode.
 
 ### Hotkeys and AMDLSS5
 

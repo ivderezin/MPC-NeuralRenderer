@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <cstdint>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -137,6 +138,23 @@ int main() {
         pixels=gpu.Read(crop,4);
         for (UINT y=0;y<11;++y) for (UINT x=0;x<13;++x)
             Require(pixels[(y*13+x)*4]==oldPixels[((y+7)*size+x+5)*4],"Crop origin / odd extent must preserve video pixels");
+        // High-bit-depth SDR must reach the same normalized 8-bit model input, without channel swaps.
+        Require(neural::IsSdrInputFormat(DXGI_FORMAT_R10G10B10A2_UNORM) &&
+                neural::IsSdrInputFormat(DXGI_FORMAT_R16G16B16A16_FLOAT), "High-bit-depth SDR formats must be accepted");
+        Require(!neural::IsSdrInputFormat(DXGI_FORMAT_P010), "YUV must be converted to RGB before neural processing");
+        const uint32_t packed10 = 512u | (256u << 10) | (1023u << 20) | (3u << 30);
+        const std::array<uint16_t,4> halfPixels = {0x3800, 0x3400, 0x3c00, 0x3c00}; // .5, .25, 1, 1
+        auto input10 = gpu.Texture(1,1,DXGI_FORMAT_R10G10B10A2_UNORM,D3D11_BIND_SHADER_RESOURCE,&packed10,4);
+        auto input16 = gpu.Texture(1,1,DXGI_FORMAT_R16G16B16A16_FLOAT,D3D11_BIND_SHADER_RESOURCE,halfPixels.data(),8);
+        auto normalized = gpu.Texture(1,1,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS);
+        auto readable = gpu.Texture(1,1,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+        for (auto* input : {&input10,&input16}) {
+            gpu.Dispatch(prepare.Get(),*input,nullptr,normalized,1,1,0);
+            gpu.Dispatch(prepare.Get(),normalized,nullptr,readable,1,1,0);
+            const auto rgb = gpu.Read(readable,4);
+            Require(std::abs(rgb[0]-.5f)<=1.0f/255 && std::abs(rgb[1]-.25f)<=1.0f/255 && rgb[2]==1 && rgb[3]==1,
+                    "10-bit and float16 SDR must normalize to the model input without changing RGB order");
+        }
         // After-upscaling NR: 8x8 source motion resampled to 16x16, scaled by the 2x ratio.
         std::vector<float> lowMotion(8*8*2);
         for (UINT i=0;i<8*8;++i) { lowMotion[i*2]=static_cast<float>(i%8); lowMotion[i*2+1]=-static_cast<float>(i/8); }
