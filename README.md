@@ -36,7 +36,7 @@
 
 ### Подключение
 
-1. Скачайте Windows x64 сборку из [GitHub Actions](https://github.com/ivderezin/MPC-NeuralRenderer/actions/workflows/main.yml) (успешный запуск для ветки **main** → **Artifacts → MPC-NeuralRenderer-Windows-x64**) или [Releases](https://github.com/ivderezin/MPC-NeuralRenderer/releases). Для новых HDR-исправлений и управления шейдерами нужна сборка из main: опубликованный `v0.1.1` предшествует этим изменениям. Распакуйте архив в постоянную папку и оставьте DLL AMD/Intel рядом с `.ax`.
+1. Скачайте Windows x64 сборку из [GitHub Actions](https://github.com/ivderezin/MPC-NeuralRenderer/actions/workflows/main.yml) (успешный запуск для ветки **main** → **Artifacts → MPC-NeuralRenderer-Windows-x64**) или [Releases](https://github.com/ivderezin/MPC-NeuralRenderer/releases). HDR-исправления и управление шейдерами входят в релиз `v0.1.2` и более новые сборки. Распакуйте архив в постоянную папку и оставьте DLL AMD/Intel рядом с `.ax`.
 2. Для функций NVIDIA скопируйте туда же нужные библиотеки: `nvngx_dlssnr.dll` — NR, `nvngx_dlss.dll` — DLSS SR, `nvngx_dlssg.dll` — DLSS MFG. Они не входят в архив.
 3. Закройте плеер и запустите `Install_MPCVR_64.cmd` от администратора.
 4. В MPC-HC x64 откройте **Options → External Filters → Add Filter → MPC Neural Renderer → Prefer**. Если фильтра нет в списке, нажмите **Browse** и укажите `nvngx.dll_MpcNeuralRenderer64.ax`.
@@ -154,7 +154,7 @@ The project started from wanting to try neural rendering in Nintendo Switch 2 ga
 
 ### Setup
 
-1. Download a Windows x64 build from [GitHub Actions](https://github.com/ivderezin/MPC-NeuralRenderer/actions/workflows/main.yml) (a successful **main** run → **Artifacts → MPC-NeuralRenderer-Windows-x64**) or [Releases](https://github.com/ivderezin/MPC-NeuralRenderer/releases). The new HDR fixes and shader controls require a main build: the published `v0.1.1` predates these changes. Extract to a permanent folder and keep the AMD/Intel DLLs beside the `.ax` file.
+1. Download a Windows x64 build from [GitHub Actions](https://github.com/ivderezin/MPC-NeuralRenderer/actions/workflows/main.yml) (a successful **main** run → **Artifacts → MPC-NeuralRenderer-Windows-x64**) or [Releases](https://github.com/ivderezin/MPC-NeuralRenderer/releases). The HDR fixes and shader controls are included in release `v0.1.2` and later builds. Extract to a permanent folder and keep the AMD/Intel DLLs beside the `.ax` file.
 2. For NVIDIA features, copy the required libraries into the same folder: `nvngx_dlssnr.dll` for NR, `nvngx_dlss.dll` for DLSS SR, and `nvngx_dlssg.dll` for DLSS MFG. These libraries are not included in the archive.
 3. Close the player and run `Install_MPCVR_64.cmd` as administrator.
 4. In MPC-HC x64, open **Options → External Filters → Add Filter → MPC Neural Renderer → Prefer**. If the filter is missing, click **Browse** and select `nvngx.dll_MpcNeuralRenderer64.ax`.
