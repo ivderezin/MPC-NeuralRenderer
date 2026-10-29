@@ -56,7 +56,7 @@
       <Command>..\update_revision.cmd</Command>
     </PreBuildEvent>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(SolutionDir)Include;$(ProjectDir)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)Include;$(ProjectDir)EchoStorm;$(ProjectDir)</AdditionalIncludeDirectories>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
@@ -138,6 +138,33 @@
     <ClCompile Include="VideoRendererInputPin.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="EchoStorm\addon\bridge.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild><WarningLevel>Level3</WarningLevel><TreatWarningAsError>false</TreatWarningAsError></ClCompile>
+    <ClInclude Include="EchoStorm\addon\bridge.h" />
+    <ClCompile Include="EchoStorm\addon\compose11.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild><WarningLevel>Level3</WarningLevel><TreatWarningAsError>false</TreatWarningAsError></ClCompile>
+    <ClInclude Include="EchoStorm\addon\compose11.h" />
+    <ClCompile Include="EchoStorm\addon\gpu_timer11.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild><WarningLevel>Level3</WarningLevel><TreatWarningAsError>false</TreatWarningAsError></ClCompile>
+    <ClInclude Include="EchoStorm\addon\gpu_timer11.h" />
+    <ClCompile Include="EchoStorm\engine\dlaa_model.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild><WarningLevel>Level3</WarningLevel><TreatWarningAsError>false</TreatWarningAsError></ClCompile>
+    <ClInclude Include="EchoStorm\engine\dlaa_model.h" />
+    <ClCompile Include="EchoStorm\engine\flow_estimator.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild><WarningLevel>Level3</WarningLevel><TreatWarningAsError>false</TreatWarningAsError></ClCompile>
+    <ClInclude Include="EchoStorm\engine\flow_estimator.h" />
+    <ClCompile Include="EchoStorm\engine\flow_fix.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild><WarningLevel>Level3</WarningLevel><TreatWarningAsError>false</TreatWarningAsError></ClCompile>
+    <ClInclude Include="EchoStorm\engine\flow_fix.h" />
+    <ClInclude Include="EchoStorm\engine\hdr_hlsl.h" />
+    <ClInclude Include="EchoStorm\engine\ngx_paths.h" />
+    <ClInclude Include="EchoStorm\engine\ngx_users.h" />
+    <ClCompile Include="EchoStorm\engine\nr_engine.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild><WarningLevel>Level3</WarningLevel><TreatWarningAsError>false</TreatWarningAsError></ClCompile>
+    <ClInclude Include="EchoStorm\engine\nr_engine.h" />
+    <ClInclude Include="EchoStorm\engine\nr_shaders.h" />
+    <ClCompile Include="EchoStorm\engine\own_synth.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild><WarningLevel>Level3</WarningLevel><TreatWarningAsError>false</TreatWarningAsError></ClCompile>
+    <ClInclude Include="EchoStorm\engine\own_synth.h" />
+    <ClCompile Include="EchoStorm\engine\shader_cache.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild><WarningLevel>Level3</WarningLevel><TreatWarningAsError>false</TreatWarningAsError></ClCompile>
+    <ClInclude Include="EchoStorm\engine\shader_cache.h" />
+    <ClInclude Include="EchoStorm\forwarder\nr_api.h" />
+    <ClCompile Include="FrameGeneration\EchoFrameGeneration.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild></ClCompile>
+    <ClInclude Include="FrameGeneration\EchoFrameGeneration.h" />
+    <ClCompile Include="NeuralRendering\EchoNr.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClInclude Include="NeuralRendering\EchoNr.h" />
     <ClInclude Include="NeuralRendering\NeuralPass.h" />
     <ClInclude Include="NeuralRendering\NeuralSettings.h" />
     <ClInclude Include="NeuralRendering\FrameHistory.h" />
@@ -215,6 +242,12 @@
   <ItemGroup>
     <None Include="res\dither32x32float16.bin" />
     <None Include="res\MpcVideoRenderer.rc2" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(Platform)'=='x64'">
+    <ProjectReference Include="EchoStorm\forwarder\EchoNrForwarder.vcxproj">
+      <Project>{E682D675-51B8-4964-895A-749A9F77E30D}</Project>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

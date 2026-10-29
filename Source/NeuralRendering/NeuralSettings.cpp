@@ -8,6 +8,9 @@ constexpr auto Key = L"Software\\MPC Neural Renderer";
 Settings Settings::Load() {
     Settings settings;
     DWORD value = 0, size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER, Key, L"EchoPipeline", RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS)
+        settings.echoPipeline = value != 0;
+    size = sizeof(value);
     if (RegGetValueW(HKEY_CURRENT_USER, Key, L"LimitGenerationToDisplay", RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS)
         settings.limitGenerationToDisplay = value != 0;
     size = sizeof(value);
@@ -27,7 +30,7 @@ Settings Settings::Load() {
     size = sizeof(value);
     if (RegGetValueW(HKEY_CURRENT_USER, Key, L"FrameGenerator", RRF_RT_REG_DWORD, nullptr, &value, &size) ==
             ERROR_SUCCESS &&
-        value <= 2)
+        value <= 3)
         settings.frameGenerator = static_cast<processing::FrameGenerator>(value);
     size = sizeof(value);
     if (RegGetValueW(HKEY_CURRENT_USER, Key, L"FrameMultiplier", RRF_RT_REG_DWORD, nullptr, &value, &size) ==
@@ -91,6 +94,10 @@ long Settings::Save() const {
     if (error == ERROR_SUCCESS)
         error = RegSetValueExW(key, L"LimitGenerationToDisplay", 0, REG_DWORD,
             reinterpret_cast<const BYTE*>(&limitValue), sizeof(limitValue));
+    DWORD pipelineValue = echoPipeline ? 1 : 0;
+    if (error == ERROR_SUCCESS)
+        error = RegSetValueExW(key, L"EchoPipeline", 0, REG_DWORD,
+            reinterpret_cast<const BYTE*>(&pipelineValue), sizeof(pipelineValue));
     RegCloseKey(key);
     return error;
 }

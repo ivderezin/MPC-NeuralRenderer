@@ -49,10 +49,11 @@ int main() {
         registry.Write(L"DlssUpscaling", 0);
         Require(neural::Settings::Load().upscaler == Upscaler::Off, "Legacy disabled SR must migrate");
         for (auto upscaler : {Upscaler::Off, Upscaler::Dlss, Upscaler::Fsr, Upscaler::Xess})
-            for (auto generator : {FrameGenerator::Dlss, FrameGenerator::Fsr, FrameGenerator::Xess}) {
+            for (auto generator : {FrameGenerator::Dlss, FrameGenerator::Fsr, FrameGenerator::Xess, FrameGenerator::EchoStorm}) {
                 settings.upscaler = upscaler;
                 settings.frameGenerator = generator;
                 settings.frameMultiplier = 4;
+                settings.echoPipeline = generator != FrameGenerator::Fsr;
                 settings.enabled = true;
                 settings.motionMethod = generator == FrameGenerator::Fsr ? neural::MotionMethod::EchoStorm : neural::MotionMethod::Fast;
                 settings.amdBridge = generator == FrameGenerator::Fsr;
@@ -73,7 +74,7 @@ int main() {
         registry.Write(L"FrameMultiplier", 99);
         registry.Write(L"NrStage", 99);
         settings = neural::Settings::Load();
-        Require(settings.upscaler == Upscaler::Off && settings.frameGenerator == FrameGenerator::Dlss,
+        Require(settings.upscaler == Upscaler::Off && settings.frameGenerator == FrameGenerator::EchoStorm,
                 "Invalid providers must fall back to valid settings");
         Require(settings.frameMultiplier == 4, "Invalid multiplier must clamp");
         Require(settings.nrStage == neural::NrStage::BeforeUpscale, "Invalid NR stage must fall back to before upscaling");

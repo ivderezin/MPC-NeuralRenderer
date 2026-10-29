@@ -10,7 +10,8 @@ enum class Upscaler : unsigned {
 enum class FrameGenerator : unsigned {
     Dlss,
     Fsr,
-    Xess
+    Xess,
+    EchoStorm
 };
 inline const wchar_t* Name(Upscaler value) {
     switch (value) {
@@ -26,6 +27,8 @@ inline const wchar_t* Name(Upscaler value) {
 }
 inline const wchar_t* Name(FrameGenerator value) {
     switch (value) {
+    case FrameGenerator::EchoStorm:
+        return L"EchoFG";
     case FrameGenerator::Fsr:
         return L"FSR FG";
     case FrameGenerator::Xess:

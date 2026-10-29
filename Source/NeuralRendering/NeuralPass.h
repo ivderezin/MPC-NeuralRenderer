@@ -23,6 +23,8 @@ public:
     unsigned GeneratedCount() const;
     unsigned long long OutputSerial() const;
     long long OutputDuration() const;
+    long long OutputTimestamp() const;
+    long long PresentationTimestamp(unsigned long long batch,unsigned index) const;
     // Frame of a completed batch: generated frames first, then the real frame; null once the batch is overwritten.
     ID3D11Texture2D* PresentationFrame(unsigned long long batch, unsigned index) const;
     const std::wstring& Status() const { return status_; }

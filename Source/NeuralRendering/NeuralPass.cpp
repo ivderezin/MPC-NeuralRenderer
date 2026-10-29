@@ -26,6 +26,7 @@
 #include <stdexcept>
 #include <nvsdk_ngx.h>
 #include "../Ngx/Feature.h"
+#include "../EchoStorm/engine/ngx_users.h"
 
 #pragma comment(lib, "nvsdk_ngx_s.lib")
 
@@ -257,6 +258,8 @@ struct NeuralPass::Impl {
     std::array<std::array<ComPtr<ID3D11Texture2D>, 3>, 2> displayGenerated;
     std::array<unsigned long long, 2> slotSerial{};
     std::array<unsigned, 2> slotGenerated{};
+    std::array<long long,2> slotTimestamp{},slotDuration{};
+    long long pendingTimestamp=0,outputTimestamp=0;
     ID3D11Texture2D* published = nullptr;
     ID3D11Texture2D* pendingReal = nullptr;
     bool pendingScaled = false, pendingHasFG = false;
@@ -297,7 +300,7 @@ struct NeuralPass::Impl {
         }
         if (snippetInitialized && shutdown)
             CallShutdown(shutdown, device12.Get());
-        if (coreInitialized)
+        if (coreInitialized && nr::ngxusers::Leaving())
             NVSDK_NGX_D3D12_Shutdown1(device12.Get());
         if (lease)
             SessionActive.clear();
@@ -551,6 +554,7 @@ struct NeuralPass::Impl {
                                                              cache.c_str(), device12.Get(), &info),
                          "Initialize driver NGX");
                 coreInitialized = true;
+                nr::ngxusers::Joined();
             } catch (const std::exception& error) {
                 ngxFailure = ngx::Message(error);
             }
@@ -789,6 +793,9 @@ struct NeuralPass::Impl {
             }
             slotSerial[slot] = serial;
             slotGenerated[slot] = generatedCount;
+            slotTimestamp[slot] = pendingTimestamp;
+            slotDuration[slot] = pendingDuration;
+            outputTimestamp = pendingTimestamp;
             outputDuration = pendingDuration;
             ReadTiming();
         }
@@ -809,6 +816,7 @@ struct NeuralPass::Impl {
                 ? std::clamp(static_cast<float>(timestamp - lastInputTimestamp) / 10000.0f, 1.0f, 500.0f)
                 : defaultFrameTimeMs;
         pendingDuration = static_cast<long long>(frameTimeMs * 10000.0f);
+        pendingTimestamp = timestamp;
         lastInputTimestamp = timestamp;
         const UINT data[] = {
             width, height, static_cast<UINT>(rect.left), static_cast<UINT>(rect.top), reset ? 1u : 0u, hdr ? 1u : 0u, 0, 0};
@@ -1033,6 +1041,15 @@ unsigned long long NeuralPass::OutputSerial() const {
 long long NeuralPass::OutputDuration() const {
     return impl_ ? impl_->outputDuration : 0;
 }
+long long NeuralPass::OutputTimestamp() const { return impl_ ? impl_->outputTimestamp : 0; }
+long long NeuralPass::PresentationTimestamp(unsigned long long batch,unsigned index) const {
+    if (!impl_) return 0;
+    const auto slot=static_cast<size_t>(batch&1);
+    if (impl_->slotSerial[slot]!=batch) return 0;
+    const auto count=impl_->slotGenerated[slot];
+    const auto remaining=index<count ? count-index : 0;
+    return impl_->slotTimestamp[slot]-impl_->slotDuration[slot]*remaining/(count+1);
+}
 ID3D11Texture2D* NeuralPass::PresentationFrame(unsigned long long batch, unsigned index) const {
     if (!impl_ || !impl_->asyncOutput.Available())
         return nullptr;
@@ -1164,6 +1181,8 @@ unsigned long long NeuralPass::OutputSerial() const {
 long long NeuralPass::OutputDuration() const {
     return 0;
 }
+long long NeuralPass::OutputTimestamp() const { return 0; }
+long long NeuralPass::PresentationTimestamp(unsigned long long,unsigned) const { return 0; }
 ID3D11Texture2D* NeuralPass::PresentationFrame(unsigned long long, unsigned) const {
     return nullptr;
 }

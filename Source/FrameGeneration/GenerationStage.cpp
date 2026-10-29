@@ -2,12 +2,14 @@
 #ifdef _WIN64
 #include "GenerationStage.h"
 #include "DlssMultiFrameGeneration.h"
+#include "EchoFrameGeneration.h"
 #include "../Processing/FsrApi.h"
 #include <ffx/framegeneration/include/ffx_framegeneration.h>
 namespace framegen {
 struct GenerationStage::Impl {
     processing::FrameGenerator provider = processing::FrameGenerator::Dlss;
     DlssMultiFrameGeneration dlss;
+    EchoFrameGeneration echo;
     processing::FsrApi fsr;
     ffxContext context = nullptr;
     unsigned width = 0, height = 0, outputWidth = 0, outputHeight = 0;
@@ -34,6 +36,10 @@ void GenerationStage::Create(processing::FrameGenerator provider, ID3D12Device* 
     p.height = height;
     p.outputWidth = outWidth;
     p.outputHeight = outHeight;
+    if (provider == processing::FrameGenerator::EchoStorm) {
+        p.echo.Create(device,outWidth,outHeight,hdr);
+        return;
+    }
     if (provider == processing::FrameGenerator::Dlss) {
         p.dlss.Create(device, list, width, height, outWidth, outHeight, hdr);
         return;
@@ -62,12 +68,17 @@ void GenerationStage::Create(processing::FrameGenerator provider, ID3D12Device* 
     processing::FsrApi::Check(p.fsr.create(&p.context, &create.header, nullptr), "Create FSR frame generation");
 }
 unsigned GenerationStage::MaxGenerated() const {
+    if (impl_->provider == processing::FrameGenerator::EchoStorm) return 3;
     return impl_->provider == processing::FrameGenerator::Dlss ? impl_->dlss.MaxGenerated() : 1;
 }
 void GenerationStage::Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* color, ID3D12Resource* depth,
                                ID3D12Resource* motion, const std::array<ID3D12Resource*, 3>& output, unsigned count,
                                bool reset, float frameTimeMs) {
     auto& p = *impl_;
+    if (p.provider == processing::FrameGenerator::EchoStorm) {
+        p.echo.Dispatch(list,color,output,count,reset);
+        return;
+    }
     if (p.provider == processing::FrameGenerator::Dlss) {
         ngx::Check(p.dlss.Evaluate(list, color, depth, motion, output, count, reset), "Dispatch DLSS MFG");
         return;
@@ -111,6 +122,7 @@ void GenerationStage::Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* 
     processing::FsrApi::Check(p.fsr.dispatch(&p.context, &generate.header), "Dispatch FSR frame generation");
 }
 unsigned GenerationStage::Collect() {
+    if (impl_->provider == processing::FrameGenerator::EchoStorm) return impl_->echo.Collect();
     return impl_->provider == processing::FrameGenerator::Dlss ? impl_->dlss.Collect() : (impl_->pendingReset ? 0 : 1);
 }
 }
