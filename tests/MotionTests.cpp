@@ -115,12 +115,18 @@ void TestEchoPresentation(Gpu& gpu) {
 
     Compose11 compose;
     Require(compose.Init(gpu.device.Get(),[](const char* message){std::cerr<<message<<'\n';}),"Native NR compose initialization");
-    std::vector<float> deltaPixels(w*h*4,.1f);
+    std::vector<float> deltaPixels(w*h*4,0);
+    for(UINT y=0;y<h;++y) for(UINT x=0;x<w;++x) {
+        const auto i=(y*w+x)*4;deltaPixels[i]=.1f*(static_cast<float>(x)+.5f)/w;
+        deltaPixels[i+1]=.02f;deltaPixels[i+2]=-.03f;
+    }
     auto delta=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,deltaPixels.data(),w*16);
     for (auto fmt:{DXGI_FORMAT_R8G8B8A8_UNORM,DXGI_FORMAT_B8G8R8A8_UNORM}) {
-        std::vector<UINT> base(w*h,0xff333333);
+      for (const unsigned rotation:{0u,90u}) {
+        const bool bgra=fmt==DXGI_FORMAT_B8G8R8A8_UNORM;
+        std::vector<UINT> base(w*h,bgra ? 0xff334d66u : 0xff664d33u);
         auto target=gpu.Texture(w,h,fmt,D3D11_BIND_RENDER_TARGET,base.data(),w*4);
-        Compose11::Args a;a.target=target.texture.Get();a.delta=delta.srv.Get();a.hiProtect=1;
+        Compose11::Args a;a.target=target.texture.Get();a.delta=delta.srv.Get();a.hiProtect=1;a.rotation=rotation;a.flip=true;
         Require(compose.Run(gpu.context.Get(),a),"Compose must support RGBA and BGRA swapchain buffers");
         D3D11_TEXTURE2D_DESC d{};target.texture->GetDesc(&d);
         d.BindFlags=0;d.Usage=D3D11_USAGE_STAGING;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
@@ -129,9 +135,13 @@ void TestEchoPresentation(Gpu& gpu) {
         D3D11_MAPPED_SUBRESOURCE read{};Check(gpu.context->Map(staging.Get(),0,D3D11_MAP_READ,0,&read));
         for(UINT y=0;y<h;++y) for(UINT x=0;x<w;++x) {
             const auto* px=static_cast<const unsigned char*>(read.pData)+y*read.RowPitch+x*4;
-            Require(px[0]>=75 && px[0]<=78 && px[1]==px[0] && px[2]==px[0],"Delta must reach every presented pixel");
+            const float u=rotation ? (static_cast<float>(y)+.5f)/h : (static_cast<float>(x)+.5f)/w;
+            const float expected=51.f+25.5f*(1.f-u);
+            Require(std::abs(px[bgra ? 2 : 0]-expected)<=1.f && px[1]==82 && px[bgra ? 0 : 2]==94,
+                "NR delta must retain RGB order and follow image rotation/flip");
         }
         gpu.context->Unmap(staging.Get(),0);
+      }
     }
     compose.Shutdown();
 }

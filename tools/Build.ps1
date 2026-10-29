@@ -18,4 +18,25 @@ $imageOutput = Join-Path $output 'docs/images'
 New-Item -ItemType Directory -Force $imageOutput | Out-Null
 Copy-Item (Join-Path $root 'docs/images/*.jpg') $imageOutput
 Copy-Item (Join-Path $root 'Source/NeuralRendering/EchoStorm-LICENSE.txt') $output
+# The independent NR path loads its own adapter dynamically. Validate the packaged
+# binary and its ABI on the runner, even though the NVIDIA model is not installed.
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class EchoForwarderPackage {
+    [DllImport("kernel32", CharSet=CharSet.Unicode, SetLastError=true)]
+    public static extern IntPtr LoadLibraryExW(string path, IntPtr file, uint flags);
+    [DllImport("kernel32", CharSet=CharSet.Ansi, ExactSpelling=true)]
+    public static extern IntPtr GetProcAddress(IntPtr module, string name);
+    [DllImport("kernel32")] public static extern bool FreeLibrary(IntPtr module);
+}
+'@
+$forwarder = [EchoForwarderPackage]::LoadLibraryExW((Join-Path $output 'nvngx.dll_mpc_echo_nr.dll'), [IntPtr]::Zero, 0x1100)
+if ($forwarder -eq [IntPtr]::Zero) { throw "Echo NR adapter could not load: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
+try {
+    foreach ($export in @('nrfwd_probe', 'nrfwd_init', 'nrfwd_set_float_slot', 'nrfwd_probe_float', 'nrfwd_get_float', 'nrfwd_create', 'nrfwd_evaluate', 'nrfwd_release', 'nrfwd_last_result')) {
+        if ([EchoForwarderPackage]::GetProcAddress($forwarder, $export) -eq [IntPtr]::Zero) { throw "Echo NR adapter export missing: $export" }
+    }
+} finally { [void][EchoForwarderPackage]::FreeLibrary($forwarder) }
+Write-Host "Echo NR adapter load and exports verified."
 Write-Host "Renderer ready: $output"

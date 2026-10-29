@@ -14,7 +14,7 @@
     <TargetName>nvngx.dll_mpc_echo_nr</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup>
-    <ClCompile><AdditionalIncludeDirectories>$(ProjectDir)..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions><LanguageStandard>stdcpp20</LanguageStandard><ExceptionHandling>Sync</ExceptionHandling><RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary><WarningLevel>Level3</WarningLevel></ClCompile>
+    <ClCompile><AdditionalIncludeDirectories>$(ProjectDir)..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions><LanguageStandard>stdcpp20</LanguageStandard><ExceptionHandling>Sync</ExceptionHandling><RuntimeLibrary>MultiThreaded</RuntimeLibrary><WarningLevel>Level3</WarningLevel></ClCompile>
     <Link><SubSystem>Windows</SubSystem></Link>
   </ItemDefinitionGroup>
   <ItemGroup><ClCompile Include="nr_forwarder.cpp" /><ClInclude Include="nr_api.h" /></ItemGroup>

@@ -340,4 +340,11 @@
       <Filter>Resource Files</Filter>
     </None>
   </ItemGroup>
+  <ItemGroup><ClCompile Include="EchoStorm\addon\auto_quality.cpp" /></ItemGroup>
+  <ItemGroup><ClInclude Include="EchoStorm\addon\auto_quality.h" /></ItemGroup>
+  <ItemGroup><ClCompile Include="FrameGeneration\EchoGuard.cpp" /></ItemGroup>
+  <ItemGroup><ClInclude Include="FrameGeneration\EchoGuard.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="FrameGeneration\EchoGuardShaders.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="FrameGeneration\EchoPresentationClock.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="FrameGeneration\ExactInputRepeat.h" /></ItemGroup>
 </Project>
