@@ -5,6 +5,9 @@
 #include "../Source/FrameGeneration/GenerationPolicy.h"
 #include "../Source/FrameGeneration/DisplayCadence.h"
 #include "../Source/NeuralRendering/NeuralSettings.h"
+#include "../Source/Upscaling/ProviderSelection.h"
+#include <stdexcept>
+#include <vector>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -25,6 +28,29 @@ int main() {
     Require(GeneratedLimit(4,1,60,16.67f)==1,"Uncapped FSR must still respect its provider limit");
     Require(GeneratedLimit(4,3,0,16.67f)==3,"Unknown refresh must not suppress uncapped FG");
     neural::Settings selection;
+    Require(selection.frameGenerator==processing::FrameGenerator::EchoStorm,"New settings must select EchoFG by default");
+    using processing::Upscaler;
+    std::vector<Upscaler> attempts;
+    auto create=[&](Upscaler provider){attempts.push_back(provider);};
+    Require(upscaling::CreateWithFallback(Upscaler::Dlss,false,create)==Upscaler::Fsr && attempts==std::vector<Upscaler>{Upscaler::Fsr},
+            "Unavailable DLSS must initialize FSR directly");
+    attempts.clear();
+    Require(upscaling::CreateWithFallback(Upscaler::Dlss,true,create)==Upscaler::Dlss && attempts==std::vector<Upscaler>{Upscaler::Dlss},
+            "Supported DLSS must remain selected");
+    attempts.clear();
+    const auto recovered=upscaling::CreateWithFallback(Upscaler::Dlss,true,[&](Upscaler provider){
+        attempts.push_back(provider);if(provider==Upscaler::Dlss)throw std::runtime_error("unsupported runtime");
+    });
+    Require(recovered==Upscaler::Fsr && attempts==std::vector<Upscaler>{Upscaler::Dlss,Upscaler::Fsr},
+            "DLSS creation failure must retry exactly once with FSR");
+    for(auto provider:{Upscaler::Off,Upscaler::Fsr,Upscaler::Xess}) {
+        attempts.clear();Require(upscaling::CreateWithFallback(provider,false,create)==provider,"Explicit non-DLSS choices must be preserved");
+        Require(attempts.size()==(provider==Upscaler::Off ? 0u : 1u),"Disabled upscaling must not initialize a provider");
+    }
+    bool failed=false;
+    try {upscaling::CreateWithFallback(Upscaler::Dlss,false,[](Upscaler){throw std::runtime_error("FSR unavailable");});}
+    catch(const std::runtime_error&){failed=true;}
+    Require(failed,"An unavailable fallback must remain an error");
     selection.upscaler=processing::Upscaler::Fsr;
     selection.frameGenerator=processing::FrameGenerator::Xess;selection.frameMultiplier=4;
     Require(!selection.ManualGeneration(),"XeSS must use its presentation backend");

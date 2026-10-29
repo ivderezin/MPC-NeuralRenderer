@@ -21,33 +21,59 @@ float2 Motion(int2 p) {
     const int2 q=clamp(int2((float2(p)+0.5)*float2(w,h)/float2(size)),int2(0,0),int2(w,h)-1);
     return tMotion[q]*float2(size)/float2(w,h);
 }
-// Bilinear endpoint sampling in pixel-centre coordinates, without border wrapping.
+// SDR remains encoded RGB. HDR10 reconstruction uses positive linear BT.2020
+// relative to SDR white; comparisons use the existing display-referred HDR view.
+float3 Working(float3 c) {[branch]if(encoding==0)return c;return PqToNits(c)/white;}
+float3 WorkingView(float3 c) {
+    [branch]if(encoding==0)return c;
+    return LinearToSrgb(Compress(max(mul(kRec2020To709,c),0.0)));
+}
+float3 EncodeWorking(float3 c) {[branch]if(encoding==0)return c;return NitsToPq(c*white);}
+bool LightAgrees(float3 a,float3 b) {
+    return encoding==0 || all(abs(a-b)<=0.15*max(max(a,b),0.01));
+}
+// Bilinear endpoint sampling in working space, without border wrapping.
 float3 SampleColor(Texture2D<float4> image, float2 p) {
     const int2 a=int2(floor(p));const float2 f=frac(p);
-    return lerp(lerp(image[a].rgb,image[a+int2(1,0)].rgb,f.x),
-                lerp(image[a+int2(0,1)].rgb,image[a+int2(1,1)].rgb,f.x),f.y);
+    return lerp(lerp(Working(image[a].rgb),Working(image[a+int2(1,0)].rgb),f.x),
+                lerp(Working(image[a+int2(0,1)].rgb),Working(image[a+int2(1,1)].rgb),f.x),f.y);
 }
 bool Inside(float2 p,float margin) {
     return all(p>=margin) && all(p<=float2(size)-1.0-margin);
 }
 bool RepairMotionImpulse(int2 p,float3 made,out float3 corrected) {
     corrected=made;
-    // This pass is calibrated on SDR replay data. Leave the existing HDR guard intact.
-    if(reserved<0.5 || encoding!=0 || !Inside(float2(p),2.0))return false;
+    if(reserved<0.5 || !Inside(float2(p),2.0))return false;
     const int2 ring[8]={int2(-2,-2),int2(0,-2),int2(2,-2),int2(2,0),
                        int2(2,2),int2(0,2),int2(-2,2),int2(-2,0)};
-    float3 neighbors[8];float3 sum=0,lo=1,hi=0;
+    float3 raw[8];float3 rawSum=0,rawLo=1,rawHi=0;
+    [unroll]for(int r=0;r<8;++r) {
+        raw[r]=tMade[p+ring[r]].rgb;rawSum+=raw[r];rawLo=min(rawLo,raw[r]);rawHi=max(rawHi,raw[r]);
+    }
+    // Reject near-identical PQ codes before the expensive transfer functions.
+    // This is only a cheap candidate gate; all perceptual/light checks still apply.
+    [branch]if(encoding!=0 && Dist(made,(rawSum-rawLo-rawHi)/6.0)<=4.0/1023.0)return false;
+    float3 neighbors[8],light[8];float3 sum=0,lo=1,hi=0;
     [unroll]for(int i=0;i<8;++i) {
-        float3 n=tMade[p+ring[i]].rgb;neighbors[i]=n;sum+=n;lo=min(lo,n);hi=max(hi,n);
+        light[i]=Working(raw[i]);
+        float3 n=WorkingView(light[i]);neighbors[i]=n;sum+=n;lo=min(lo,n);hi=max(hi,n);
     }
     const float3 reference=(sum-lo-hi)/6.0;
     uint support=0;sum=0;
     [unroll]for(int j=0;j<8;++j)if(Dist(neighbors[j],reference)<=12.0/255.0) {
-        ++support;sum+=neighbors[j];
+        ++support;sum+=light[j];
     }
     if(support<6)return false;
     const float3 spatial=sum/float(support);
-    if(Dist(made,spatial)<=24.0/255.0)return false;
+    const float3 spatialView=WorkingView(spatial);
+    if(Dist(WorkingView(Working(made)),spatialView)<=24.0/255.0)return false;
+    // Tone-mapping compresses highlights: also require agreement in actual light.
+    if(encoding!=0) {
+        uint lightSupport=0;
+        [unroll]for(int n=0;n<8;++n)
+            if(Dist(neighbors[n],reference)<=12.0/255.0 && LightAgrees(light[n],spatial))++lightSupport;
+        if(lightSupport<6)return false;
+    }
     // Motion is current -> previous. Solve the current coordinate of this
     // intermediate pixel; a half-vector lookup at p alone fails near boundaries.
     const float back=1.0-fraction;
@@ -71,8 +97,10 @@ bool RepairMotionImpulse(int2 p,float3 made,out float3 corrected) {
         if(!all(isfinite(neighbor)) || length(neighbor-v)>1.5)return false;
     }
     const float3 before=SampleColor(tBefore,previous),now=SampleColor(tNow,q);
-    if(Dist(before,now)>8.0/255.0 || Dist(lerp(before,now,fraction),spatial)>12.0/255.0)return false;
-    corrected=spatial;return true;
+    const float3 expected=lerp(before,now,fraction);
+    if(Dist(WorkingView(before),WorkingView(now))>8.0/255.0 || Dist(WorkingView(expected),spatialView)>12.0/255.0 ||
+       !LightAgrees(before,now) || !LightAgrees(expected,spatial))return false;
+    corrected=EncodeWorking(spatial);return true;
 }
 groupshared float lengths[256];
 [numthreads(256,1,1)] void Mean(uint tid:SV_GroupIndex) {

@@ -187,17 +187,50 @@ void TestDlssMotionImpulses(Gpu12& gpu) {
         Require(pixels[(y*w+w-1)*4]==0,"Image boundaries must not be sampled outside the frame");
         Require(gpu.Read(legacyOutputs[i])==originals[i],"Non-DLSS guards must retain their existing output");
     }
-    std::vector<unsigned> hdr(w*h,512u|(512u<<10)|(512u<<20)|(3u<<30)),hdrBad=hdr;
-    hdrBad[y*w+64]=3u<<30;
-    auto hdrReal=gpu.Texture(w,h,DXGI_FORMAT_R10G10B10A2_UNORM,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,hdr.data());
-    auto hdrMade=gpu.Texture(w,h,DXGI_FORMAT_R10G10B10A2_UNORM,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,hdrBad.data());
+    auto pack=[](double nits,unsigned alpha) {
+        auto pq=[](double n) {
+            const double v=std::pow(n/10000.0,0.1593017578125);
+            return static_cast<unsigned>(std::lround(std::pow((0.8359375+18.8515625*v)/(1.0+18.6875*v),78.84375)*1023.0));
+        };
+        return pq(nits)|(pq(nits*.7)<<10)|(pq(nits*.4)<<20)|(alpha<<30);
+    };
     framegen::EchoGuard hdrGuard;hdrGuard.Create(gpu.device.Get(),w,h,true,true);
-    std::array<ID3D12Resource*,3> hdrOutputs{hdrMade.Get(),nullptr,nullptr};
-    hdrGuard.Dispatch(gpu.list.Get(),hdrReal.Get(),motion.Get(),hdrOutputs,0,true);gpu.Finish();
-    hdrGuard.Dispatch(gpu.list.Get(),hdrReal.Get(),motion.Get(),hdrOutputs,1,false);gpu.Finish();
-    const auto hdrPixels=gpu.Read(hdrMade.Get());unsigned packed=0;std::memcpy(&packed,hdrPixels.data()+(y*w+64)*4,4);
-    Require(packed==(3u<<30),"The SDR impulse heuristic must not alter HDR output");
-    std::cout<<"DLSS motion impulse repair, MFG fractions, real detail, rejection, bypass, odd size and HDR exclusion passed (WARP)\n";
+    for(double nits:{20.0,203.0,1000.0,4000.0}) {
+        const auto real=pack(nits,3),generated=pack(nits,1),highlight=pack(10000,1);
+        std::vector<unsigned> hdrA(w*h,real),hdrB=hdrA;
+        for(unsigned row=0;row<h;++row) {
+            hdrA[row*w+80]=pack(10000,3);hdrB[row*w+72]=pack(10000,3);
+            for(unsigned x=92;x<=112;++x)hdrB[row*w+x]=pack(nits*2,3);
+        }
+        auto first=gpu.Texture(w,h,DXGI_FORMAT_R10G10B10A2_UNORM,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,hdrA.data());
+        auto second=gpu.Texture(w,h,DXGI_FORMAT_R10G10B10A2_UNORM,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,hdrB.data());
+        std::array<ComPtr<ID3D12Resource>,3> hdrMade;
+        std::array<ID3D12Resource*,3> hdrOutputs{};
+        std::array<std::vector<unsigned>,3> raw;
+        for(unsigned i=0;i<3;++i) {
+            raw[i].assign(w*h,generated);
+            for(unsigned row=0;row<h;++row)raw[i][row*w+80-2*(i+1)]=highlight;
+            for(unsigned row=y;row<y+2;++row)for(unsigned x=64;x<66;++x)raw[i][row*w+x]=1u<<30;
+            raw[i][y*w+100]=1u<<30;
+            hdrMade[i]=gpu.Texture(w,h,DXGI_FORMAT_R10G10B10A2_UNORM,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,raw[i].data());
+            hdrOutputs[i]=hdrMade[i].Get();
+        }
+        hdrGuard.Dispatch(gpu.list.Get(),first.Get(),motion.Get(),hdrOutputs,0,true);gpu.Finish();
+        hdrGuard.Dispatch(gpu.list.Get(),second.Get(),motion.Get(),hdrOutputs,3,false);gpu.Finish();
+        for(unsigned i=0;i<3;++i) {
+            const auto pixels=gpu.Read(hdrMade[i].Get());
+            for(unsigned row=0;row<h;++row)for(unsigned x=0;x<w;++x) {
+                unsigned actual=0;std::memcpy(&actual,pixels.data()+(row*w+x)*4,4);
+                if(row>=y && row<y+2 && x>=64 && x<66) {
+                    for(unsigned channel=0;channel<3;++channel)
+                        Require(std::abs(static_cast<int>((actual>>(10*channel))&1023)-static_cast<int>((generated>>(10*channel))&1023))<=2,
+                                "HDR impulse must reconstruct its native PQ/BT.2020 color without clipping highlights");
+                    Require((actual>>30)==1,"HDR repair must preserve the original SDK alpha");
+                } else Require(actual==raw[i][row*w+x],"HDR detail, endpoint disagreement and untouched pixels must remain bit-exact");
+            }
+        }
+    }
+    std::cout<<"DLSS SDR/HDR10 impulse repair, MFG fractions, 20-4000 nit colors, real highlights, rejection and alpha passed (WARP)\n";
 }
 int main() {
     try {

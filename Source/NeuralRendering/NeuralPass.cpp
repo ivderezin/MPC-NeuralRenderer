@@ -9,6 +9,7 @@
 #include "../FrameGeneration/FrameContentProbe.h"
 #include "../FrameGeneration/ExactInputRepeat.h"
 #include "../Upscaling/UpscaleStage.h"
+#include "../Upscaling/ProviderSelection.h"
 #include "../FrameGeneration/GenerationStage.h"
 #include "../FrameGeneration/GenerationPolicy.h"
 #include "../Processing/HdrComposite.h"
@@ -242,6 +243,7 @@ struct NeuralPass::Impl {
     bool haveDistinctTimestamp=false;
     bool diagnosticsEnabled = false, diagnosticsFailed = false;
     Settings options;
+    processing::Upscaler activeUpscaler=processing::Upscaler::Off;
     upscaling::Extent target{}, monitor{};
     double refreshHz = 60;
     upscaling::UpscaleStage superResolution;
@@ -373,7 +375,7 @@ struct NeuralPass::Impl {
             }
         } else
             message << (options.echoPipeline ? L"NR stage: independent presentation composition" : L"NR: Off");
-        message << L"\n" << processing::Name(options.upscaler) << L" upscaling: ";
+        message << L"\n" << processing::Name(activeUpscaler) << L" upscaling: ";
         if (srUsable)
             message << width << L"x" << height << L" -> " << target.width << L"x" << target.height;
         else if (!srFailure.empty())
@@ -383,6 +385,8 @@ struct NeuralPass::Impl {
                                                                         : L"Off");
         if (options.FsrNative())
             message << L" (AMDLSS5 bridge inputs; external NR unverified)";
+        if(activeUpscaler==processing::Upscaler::Fsr && options.upscaler==processing::Upscaler::Dlss)
+            message << L" (automatic fallback: DLSS unavailable)";
         if (options.ManualGeneration() && options.frameGenerator == processing::FrameGenerator::Dlss && options.motionMethod == MotionMethod::EchoStorm)
             message << L"\nDLSS FG guidance: native EchoStorm, final-frame resolution";
         if (options.frameGenerator != processing::FrameGenerator::Xess) {
@@ -595,12 +599,18 @@ struct NeuralPass::Impl {
                 nrFailure = ngx::Message(error);
             }
         }
+        bool dlssAvailable=false;
+        if(options.upscaler==processing::Upscaler::Dlss && coreInitialized) {
+            NVSDK_NGX_Parameter* capabilities=nullptr;int available=0;
+            if(NVSDK_NGX_D3D12_GetCapabilityParameters(&capabilities)==NVSDK_NGX_Result_Success && capabilities &&
+               capabilities->Get(NVSDK_NGX_Parameter_SuperSampling_Available,&available)==NVSDK_NGX_Result_Success)
+                dlssAvailable=available!=0;
+        }
+        activeUpscaler=upscaling::AvailableProvider(options.upscaler,dlssAvailable);
         if ((options.upscaler != processing::Upscaler::Off) &&
             (upscaling::ShouldUpscale({width, height}, target, monitor) || options.FsrNative())) {
             try {
                 scaled.Create(device, device12.Get(), target.width, target.height, DXGI_FORMAT_R8G8B8A8_UNORM);
-                if (options.upscaler == processing::Upscaler::Dlss && !coreInitialized)
-                    throw std::runtime_error(std::string(ngxFailure.begin(), ngxFailure.end()));
                 auto runtimeDirectory = directory;
                 if (options.FsrNative()) {
                     std::array<wchar_t, 32768> executable{};
@@ -611,8 +621,11 @@ struct NeuralPass::Impl {
                     if (std::filesystem::exists(playerDirectory / L"amd_fidelityfx_upscaler_dx12.dll"))
                         runtimeDirectory = playerDirectory;
                 }
-                superResolution.Create(options.upscaler, device12.Get(), list.Get(), {width, height}, target,
-                                       runtimeDirectory, options.motionMethod == MotionMethod::EchoStorm);
+                activeUpscaler=upscaling::CreateWithFallback(options.upscaler,dlssAvailable,[&](processing::Upscaler provider) {
+                    activeUpscaler=provider;
+                    superResolution.Create(provider, device12.Get(), list.Get(), {width, height}, target,
+                                           runtimeDirectory, options.motionMethod == MotionMethod::EchoStorm);
+                });
                 srUsable = true;
             } catch (const std::exception& error) {
                 srFailure = ngx::Message(error);

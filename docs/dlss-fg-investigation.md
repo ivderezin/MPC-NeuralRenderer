@@ -52,14 +52,20 @@ motion is coherent. It uses each actual MFG fraction, checks both source bounds,
 and preserves the SDK alpha. On this single replay the CPU model changes 2,336
 of 8,294,400 pixels (about 0.028%); this is a coverage count, not a quality score.
 
-The new pass is DLSS-only and SDR-only, controlled by the existing saved guard
+The pass was initially SDR-only. It now supports HDR10 with PQ decoding,
+linear BT.2020 reconstruction and display-referred comparisons. Relative light
+agreement is also required to avoid treating compressed highlights as equal.
+It remains DLSS-only, controlled by the existing saved guard
 toggle, now labeled "protect interpolation". It is integrated into the existing
 post-FG shader with no extra full-frame GPU dispatch. Sparse impulse correction
 does not repair all disocclusions or larger edge defects. Physical-GPU temporal
 quality and GPU cost still require live testing. WARP regressions exercise moving
 2x2 defects at all three 4x fractions, genuine thin moving detail, inconsistent
 motion, disagreeing endpoints, odd sizes, bypass, unchanged legacy output and
-exclusion of the new heuristic from HDR.
+HDR10 colors at 20, 203, 1000 and 4000 nits, 10000-nit real details,
+alpha preservation and bit-exact preservation of untouched HDR pixels.
+The user confirmed the SDR impulse guard in live playback; the new HDR
+extension is validated with WARP, separately from physical HDR testing.
 
 Private captures are not committed. The source SDK definitions are in the pinned
 NGX dependencies; normalization and scene/UI recommendations are also documented
