@@ -1,6 +1,7 @@
 # DLSS FG capture investigation
 
-Live playback with the motion-scale fix still needs confirmation. These observations are from
+The user confirmed radically improved live playback with the motion-scale fix,
+with small residual artifacts. These observations are from
 one 3840×2160 SDR pair on the user's RTX 5080 with DLSS-G 310.9.16.0; they are
 not a general quality result or proof of a runtime defect.
 
@@ -39,6 +40,26 @@ depth, camera pose and a true reference intermediate frame.
 Replay v2 preserves its historical normalized `baseline` for reproducibility;
 `pixel_scale_control` now corresponds to the live wrapper's corrected scale.
 Reversed motion remains a deliberately wrong sensitivity control.
+
+## Residual SDR impulses
+
+An offline pass over the improved replay identifies sparse color impulses.
+A broad motion-warped endpoint replacement was rejected after visual inspection:
+it creates new patches near the upper frame boundary. The adopted guard instead
+changes only an isolated generated-pixel outlier when at least six of eight
+surrounding samples agree, both warped endpoints confirm their color, and local
+motion is coherent. It uses each actual MFG fraction, checks both source bounds,
+and preserves the SDK alpha. On this single replay the CPU model changes 2,336
+of 8,294,400 pixels (about 0.028%); this is a coverage count, not a quality score.
+
+The new pass is DLSS-only and SDR-only, controlled by the existing saved guard
+toggle, now labeled "protect interpolation". It is integrated into the existing
+post-FG shader with no extra full-frame GPU dispatch. Sparse impulse correction
+does not repair all disocclusions or larger edge defects. Physical-GPU temporal
+quality and GPU cost still require live testing. WARP regressions exercise moving
+2x2 defects at all three 4x fractions, genuine thin moving detail, inconsistent
+motion, disagreeing endpoints, odd sizes, bypass, unchanged legacy output and
+exclusion of the new heuristic from HDR.
 
 Private captures are not committed. The source SDK definitions are in the pinned
 NGX dependencies; normalization and scene/UI recommendations are also documented

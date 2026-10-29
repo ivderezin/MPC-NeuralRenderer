@@ -8,8 +8,8 @@
 namespace framegen {
 using processing::CheckHr;
 using processing::Transition;
-void EchoGuard::Create(ID3D12Device* device,UINT width,UINT height,bool hdr) {
-    device_=device; width_=width; height_=height;hdr_=hdr;haveBefore_=false;
+void EchoGuard::Create(ID3D12Device* device,UINT width,UINT height,bool hdr,bool motionOutliers) {
+    device_=device; width_=width; height_=height;hdr_=hdr;haveBefore_=false;motionOutliers_=motionOutliers;
     D3D12_DESCRIPTOR_RANGE ranges[2]{};
     ranges[0].RangeType=D3D12_DESCRIPTOR_RANGE_TYPE_SRV;ranges[0].NumDescriptors=5;
     ranges[1].RangeType=D3D12_DESCRIPTOR_RANGE_TYPE_UAV;ranges[1].NumDescriptors=2;ranges[1].OffsetInDescriptorsFromTableStart=5;
@@ -69,7 +69,7 @@ void EchoGuard::Dispatch(ID3D12GraphicsCommandList* list,ID3D12Resource* color,I
         };
         ID3D12DescriptorHeap* heaps[]={heap_.Get()};list->SetDescriptorHeaps(1,heaps);list->SetComputeRootSignature(root_.Get());
         struct C {UINT w,h;int radius;float agree,apart,reserved;UINT encoding;float white,fraction;} c{
-            width_,height_,static_cast<int>((std::max)(2u,width_/640)),16.f,15.f,0,hdr_ ? 2u : 0u,203.f,.5f};
+            width_,height_,static_cast<int>((std::max)(2u,width_/640)),16.f,15.f,motionOutliers_ ? 1.f : 0.f,hdr_ ? 2u : 0u,203.f,.5f};
         views(3,nullptr);list->SetComputeRoot32BitConstants(1,9,&c,0);list->SetPipelineState(meanPipeline_.Get());list->Dispatch(1,1,1);
         Transition(list,mean_.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         for (unsigned i=0;i<count;++i) {

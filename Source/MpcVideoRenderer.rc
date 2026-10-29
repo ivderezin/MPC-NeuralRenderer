@@ -133,7 +133,7 @@ BEGIN
     COMBOBOX        IDC_MOTION_METHOD,89,381,253,70,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     CONTROL         "Limit frame generation to monitor refresh rate",IDC_FG_LIMIT_DISPLAY,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,399,300,10
     CONTROL         "EchoStorm independent NR / compose at presentation",IDC_ECHO_PIPELINE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,415,330,10
-    CONTROL         "DLSS FG: protect slow foreground (off = SDK output)",IDC_DLSS_FG_GUARD,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,431,224,10
+    CONTROL         "DLSS FG: protect interpolation (off = SDK output)",IDC_DLSS_FG_GUARD,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,431,224,10
     PUSHBUTTON      "Save DLSS FG sample",IDC_DLSS_SAVE_SAMPLE,240,428,102,14
     GROUPBOX        "Pixel shaders (D3D11, current session; applied immediately)",IDC_STATIC,5,453,342,42
     PUSHBUTTON      "Add pre-resize...",IDC_SHADER_PRE_ADD,10,467,97,14

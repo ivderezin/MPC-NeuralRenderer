@@ -135,10 +135,75 @@ void TestSampleCapture(Gpu12& gpu) {
     std::filesystem::remove_all(directory);
     std::cout<<"One-shot DLSS sample capture, exact PNG/raw data and frame-ID gap passed (WARP)\n";
 }
+void TestDlssMotionImpulses(Gpu12& gpu) {
+    constexpr unsigned w=129,h=65,y=32;
+    std::vector<unsigned char> a(w*h*4,255),b(a.size(),255);
+    std::vector<float> vectors(w*h*2,0);
+    auto paint=[&](std::vector<unsigned char>& pixels,unsigned x,unsigned row,unsigned value) {
+        for(unsigned c=0;c<3;++c)pixels[(row*w+x)*4+c]=static_cast<unsigned char>(value);
+    };
+    for(unsigned row=0;row<h;++row)for(unsigned x=0;x<w;++x) {
+        paint(a,x,row,50+x/2);paint(b,x,row,50+(x+8)/2);
+        if(x==80)paint(a,x,row,0);
+        if(x==72)paint(b,x,row,0);
+        if(x>=92 && x<=112) {paint(a,x,row,20);paint(b,x,row,180);}
+        vectors[(row*w+x)*2]=x<48 ? 8.f+4.f*static_cast<float>((x/2)%2) : 8.f;
+    }
+    auto before=gpu.Texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,a.data());
+    auto now=gpu.Texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,b.data());
+    auto motion=gpu.Texture(w,h,DXGI_FORMAT_R32G32_FLOAT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,vectors.data(),8);
+    std::array<std::vector<unsigned char>,3> originals;
+    std::array<ComPtr<ID3D12Resource>,3> made,legacyMade;
+    std::array<ID3D12Resource*,3> outputs{},legacyOutputs{};
+    for(unsigned i=0;i<3;++i) {
+        auto& raw=originals[i];raw.resize(w*h*4,137);
+        const unsigned shift=2*(i+1);
+        for(unsigned row=0;row<h;++row)for(unsigned x=0;x<w;++x) {
+            paint(raw,x,row,50+(x+shift)/2);
+            if(x==80-shift)paint(raw,x,row,0); // A real moving one-pixel line.
+        }
+        for(unsigned row=y;row<y+2;++row)for(unsigned x=64;x<66;++x)paint(raw,x,row,0);
+        paint(raw,32,y,0);paint(raw,100,y,0);paint(raw,w-1,y,0);
+        made[i]=gpu.Texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,raw.data());outputs[i]=made[i].Get();
+        legacyMade[i]=gpu.Texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,raw.data());legacyOutputs[i]=legacyMade[i].Get();
+    }
+    framegen::EchoGuard guard,legacy;
+    guard.Create(gpu.device.Get(),w,h,false,true);legacy.Create(gpu.device.Get(),w,h,false);
+    guard.Dispatch(gpu.list.Get(),before.Get(),motion.Get(),outputs,0,true);
+    legacy.Dispatch(gpu.list.Get(),before.Get(),motion.Get(),legacyOutputs,0,true);gpu.Finish();
+    Require(gpu.Read(outputs[0])==originals[0],"DLSS guard bypass must leave all SDK pixels intact");
+    guard.Dispatch(gpu.list.Get(),now.Get(),motion.Get(),outputs,3,false);
+    legacy.Dispatch(gpu.list.Get(),now.Get(),motion.Get(),legacyOutputs,3,false);gpu.Finish();
+    for(unsigned i=0;i<3;++i) {
+        const auto pixels=gpu.Read(outputs[i]);const unsigned shift=2*(i+1);
+        for(unsigned row=y;row<y+2;++row)for(unsigned x=64;x<66;++x) {
+            Require(std::abs(static_cast<int>(pixels[(row*w+x)*4])-static_cast<int>(50+(x+shift)/2))<=1,
+                    "Moving 2x2 interpolation impulses must be repaired at every MFG fraction");
+            Require(pixels[(row*w+x)*4+3]==137,"Motion impulse repair must preserve SDK alpha");
+        }
+        Require(pixels[(y*w+80-shift)*4]==0,"A real moving thin line must survive the impulse guard");
+        Require(pixels[(y*w+100)*4]==0,"Conflicting real endpoints must not be used to invent a repair");
+        Require(pixels[(y*w+32)*4]==0,"Discontinuous motion must reject impulse repair");
+        Require(pixels[(y*w+w-1)*4]==0,"Image boundaries must not be sampled outside the frame");
+        Require(gpu.Read(legacyOutputs[i])==originals[i],"Non-DLSS guards must retain their existing output");
+    }
+    std::vector<unsigned> hdr(w*h,512u|(512u<<10)|(512u<<20)|(3u<<30)),hdrBad=hdr;
+    hdrBad[y*w+64]=3u<<30;
+    auto hdrReal=gpu.Texture(w,h,DXGI_FORMAT_R10G10B10A2_UNORM,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,hdr.data());
+    auto hdrMade=gpu.Texture(w,h,DXGI_FORMAT_R10G10B10A2_UNORM,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,hdrBad.data());
+    framegen::EchoGuard hdrGuard;hdrGuard.Create(gpu.device.Get(),w,h,true,true);
+    std::array<ID3D12Resource*,3> hdrOutputs{hdrMade.Get(),nullptr,nullptr};
+    hdrGuard.Dispatch(gpu.list.Get(),hdrReal.Get(),motion.Get(),hdrOutputs,0,true);gpu.Finish();
+    hdrGuard.Dispatch(gpu.list.Get(),hdrReal.Get(),motion.Get(),hdrOutputs,1,false);gpu.Finish();
+    const auto hdrPixels=gpu.Read(hdrMade.Get());unsigned packed=0;std::memcpy(&packed,hdrPixels.data()+(y*w+64)*4,4);
+    Require(packed==(3u<<30),"The SDR impulse heuristic must not alter HDR output");
+    std::cout<<"DLSS motion impulse repair, MFG fractions, real detail, rejection, bypass, odd size and HDR exclusion passed (WARP)\n";
+}
 int main() {
     try {
         Gpu12 gpu;
         TestSampleCapture(gpu);
+        TestDlssMotionImpulses(gpu);
         constexpr unsigned w=128,h=64;
         std::vector<unsigned char> a(w*h*4),b(a.size());
         auto pattern=[](unsigned x,unsigned y) {return static_cast<unsigned char>(32+(((x/8)*73856093u)^((y/8)*19349663u))%192);};

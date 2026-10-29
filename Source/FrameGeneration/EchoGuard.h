@@ -12,9 +12,9 @@ class EchoGuard {
     Ptr<ID3D12DescriptorHeap> heap_;
     Ptr<ID3D12Resource> mean_,before_,scratch_;
     UINT stride_=0,width_=0,height_=0;
-    bool hdr_=false,haveBefore_=false;
+    bool hdr_=false,haveBefore_=false,motionOutliers_=false;
 public:
-    void Create(ID3D12Device* device,UINT width,UINT height,bool hdr);
+    void Create(ID3D12Device* device,UINT width,UINT height,bool hdr,bool motionOutliers=false);
     void Dispatch(ID3D12GraphicsCommandList* list,ID3D12Resource* color,ID3D12Resource* motion,
                   const std::array<ID3D12Resource*,3>& output,unsigned count,bool reset);
 };
