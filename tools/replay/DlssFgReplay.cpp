@@ -208,25 +208,48 @@ int wmain(int argc,wchar_t** argv) {
         const auto motion=Bytes(input/L"motion.raw",bytes),depth=Bytes(input/L"depth.raw",bytes);std::vector<unsigned char> zero(bytes,0);
         const auto output=input/(L"Replay-"+std::to_wstring(GetTickCount64()));std::filesystem::create_directories(output);
         std::ofstream report(output/L"report.txt");report.exceptions(std::ios::badbit|std::ios::failbit);
-        report<<"DLSS FG captured-pair replay v1\nThree repeated previous frames warm up each fresh feature, then the captured current frame.\nInput lifetime and motionVectorsDilated are varied independently. Prepared is a metadata-only probe: no dilation is applied.\nPhotometric midpoint error is a diagnostic, not ground truth. The replay executable/profile and pre-capture history differ from the live player.\n\n";
+        const bool lifetime=argc>2 && std::wstring_view(argv[2])==L"--lifetime";
+        report<<"DLSS FG captured-pair replay v2; suite="<<(lifetime ? "lifetime" : "guidance")<<"\n";
+        report<<"DLSS FG captured-pair replay\nThree repeated previous frames warm up each fresh feature, then the captured current frame.\nThe default suite probes motion sensitivity, optional scene/UI inputs and video metadata. Pixel scale and reversed motion are deliberately nonstandard controls, not recommended settings. The optional lifetime suite probes retained textures and the dilation metadata flag only.\nPhotometric midpoint error is a diagnostic, not ground truth. The replay executable/profile and pre-capture history differ from the live player.\n\n";
         Gpu gpu;NgxSession ngx(gpu.device.Get());
         auto a=gpu.Texture(current.w,current.h,DXGI_FORMAT_R8G8B8A8_UNORM,previous.rgba.data(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         auto b=gpu.Texture(current.w,current.h,DXGI_FORMAT_R8G8B8A8_UNORM,current.rgba.data(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         auto mv0=gpu.Texture(current.w,current.h,DXGI_FORMAT_R16G16_FLOAT,zero.data(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         auto mv=gpu.Texture(current.w,current.h,DXGI_FORMAT_R16G16_FLOAT,motion.data(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        auto ui=gpu.Texture(current.w,current.h,DXGI_FORMAT_R8G8B8A8_UNORM,zero.data(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         auto z=gpu.Texture(current.w,current.h,DXGI_FORMAT_R32_FLOAT,depth.data(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         auto colorScratch=gpu.Texture(current.w,current.h,DXGI_FORMAT_R8G8B8A8_UNORM,previous.rgba.data(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         auto motionScratch=gpu.Texture(current.w,current.h,DXGI_FORMAT_R16G16_FLOAT,zero.data(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         auto made=gpu.Texture(current.w,current.h,DXGI_FORMAT_R8G8B8A8_UNORM,nullptr,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);gpu.Finish();
-        struct Variant {const char* name;bool color,motion,prepared;};
-        const Variant variants[]={{"reuse_inputs",false,false,false},{"retain_color",true,false,false},{"retain_motion",false,true,false},{"retain_inputs",true,true,false},{"reuse_inputs_prepared",false,false,true},{"retain_inputs_prepared",true,true,true}};
+        struct Variant {
+            const char* name;bool color=true,motion=true,prepared=false,zeroMotion=false;
+            float scale=1;bool pixelScale=false,hudless=false,emptyUi=false,video=false;
+        };
+        std::vector<Variant> variants;
+        if(lifetime)variants={{"reuse_inputs",false,false,false},{"retain_color",true,false,false},
+            {"retain_motion",false,true,false},{"retain_inputs"},{"reuse_inputs_prepared",false,false,true},{"retain_inputs_prepared",true,true,true}};
+        else variants={{"baseline"},{"zero_motion",true,true,false,true},
+            {"reverse_motion_control",true,true,false,false,-1},
+            {"pixel_scale_control",true,true,false,false,1,true},
+            {"hudless_color",true,true,false,false,1,false,true},
+            {"hudless_empty_ui",true,true,false,false,1,false,true,true},
+            {"video_flag",true,true,false,false,1,false,false,false,true}};
+        std::optional<Image> baseline;
         for(const auto& variant:variants) {
             std::cout<<variant.name<<" ..."<<std::endl;
             framegen::DlssMultiFrameGeneration generator;generator.Create(gpu.device.Get(),gpu.list.Get(),current.w,current.h,current.w,current.h,false);
-            generator.SetMotionVectorsDilated(variant.prepared);generator.SetGuidanceInfo("captured replay field");gpu.Finish();
+            generator.SetMotionVectorsDilated(variant.prepared);generator.SetGuidanceInfo("captured replay field");
+            framegen::DlssReplayControls controls;
+            controls.motionScaleX=variant.pixelScale ? 1.f : variant.scale/static_cast<float>(current.w);
+            controls.motionScaleY=variant.pixelScale ? 1.f : variant.scale/static_cast<float>(current.h);
+            controls.hudlessColor=variant.hudless;controls.emptyUi=variant.emptyUi ? ui.Get() : nullptr;controls.video=variant.video;
+            generator.SetReplayControls(controls);gpu.Finish();
+            report<<variant.name<<": mvec_scale="<<controls.motionScaleX<<','<<controls.motionScaleY
+                <<"; zero_motion="<<variant.zeroMotion<<"; hudless="<<controls.hudlessColor
+                <<"; empty_ui="<<variant.emptyUi<<"; video="<<controls.video<<"; dilated="<<variant.prepared<<'\n';
             std::array<ID3D12Resource*,3> outputs{made.Get(),nullptr,nullptr};unsigned published=0;
             for(unsigned step=0;step<4;++step) {
-                auto* source=step==3 ? b.Get() : a.Get();auto* vectors=step==3 ? mv.Get() : mv0.Get();
+                auto* source=step==3 ? b.Get() : a.Get();auto* vectors=step==3 && !variant.zeroMotion ? mv.Get() : mv0.Get();
                 if(!variant.color)gpu.Copy(colorScratch.Get(),source);
                 if(!variant.motion)gpu.Copy(motionScratch.Get(),vectors);
                 const auto result=generator.Evaluate(gpu.list.Get(),variant.color ? source : colorScratch.Get(),z.Get(),variant.motion ? vectors : motionScratch.Get(),outputs,1,step==0);
@@ -235,7 +258,15 @@ int wmain(int argc,wchar_t** argv) {
             report<<variant.name<<": published="<<published<<"; ";
             if(published) {
                 const auto result=gpu.Read(made.Get());SavePng(factory.Get(),output/(std::string(variant.name)+".png"),result);
-                report<<"midpoint_error="<<MidpointError(previous,current,result,motion)<<'\n';
+                report<<"midpoint_error="<<MidpointError(previous,current,result,motion);
+                if(!baseline)baseline=result;
+                uint64_t changed=0;double difference=0;
+                for(size_t i=0;i<result.rgba.size();++i)if(i%4!=3) {
+                    const auto delta=std::abs(static_cast<int>(result.rgba[i])-baseline->rgba[i]);
+                    if(delta)++changed;difference+=delta;
+                }
+                report<<"; baseline_changed_rgb_components="<<changed
+                    <<"; baseline_rgb_mae="<<difference/(static_cast<double>(result.w)*result.h*3)<<'\n';
             }else report<<"SDK disabled interpolation\n";
             const auto runtime=generator.RuntimeStatus();
             const int length=WideCharToMultiByte(CP_UTF8,0,runtime.data(),static_cast<int>(runtime.size()),nullptr,0,nullptr,nullptr);

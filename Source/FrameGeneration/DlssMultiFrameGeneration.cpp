@@ -79,6 +79,12 @@ NVSDK_NGX_Result DlssMultiFrameGeneration::Evaluate(ID3D12GraphicsCommandList* l
     std::memcpy(options.clipToCameraView,camera.clipToView.data(),sizeof(options.clipToCameraView));
     options.mvecsSubrectSize = options.depthSubrectSize = {inputWidth_,inputHeight_};
     options.backbufferSubrectSize = options.outputInterpSubrectSize = {outputWidth_,outputHeight_};
+    if(replay_) {
+        options.mvecScale[0]=replay_->motionScaleX;options.mvecScale[1]=replay_->motionScaleY;
+        options.notRenderingGameFrames=replay_->video;
+        if(replay_->hudlessColor)options.hudLessSubrectSize={outputWidth_,outputHeight_};
+        if(replay_->emptyUi)options.uiSubrectSize={outputWidth_,outputHeight_};
+    }
     if(capture_.Before(list,color,depth,motion,frameId_,reset,runtimeStatus_)) {
         try {
             std::ostringstream text;text.precision(std::numeric_limits<float>::max_digits10);
@@ -101,6 +107,10 @@ NVSDK_NGX_Result DlssMultiFrameGeneration::Evaluate(ID3D12GraphicsCommandList* l
         ngx::Transition(list,disabled_[i].Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         NVSDK_NGX_D3D12_DLSSG_Eval_Params evaluate{};
         evaluate.pBackbuffer = color;
+        if(replay_) {
+            evaluate.pHudless=replay_->hudlessColor ? color : nullptr;
+            evaluate.pUI=replay_->emptyUi;
+        }
         evaluate.pDepth = depth; evaluate.pMVecs = motion;
         evaluate.pOutputInterpFrame = output[i]; evaluate.pOutputDisableInterpolation = disabled_[i].Get();
         options.multiFrameIndex = i+1;
