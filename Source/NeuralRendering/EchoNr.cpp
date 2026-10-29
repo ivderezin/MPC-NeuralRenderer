@@ -163,6 +163,7 @@ void EchoNr::Compose(ID3D11DeviceContext* context,ID3D11Texture2D* target,const 
     D3D11_TEXTURE2D_DESC desc{}; target->GetDesc(&desc);
     Compose11::Args args;
     args.rotation=static_cast<unsigned>(rotation); args.flip=flip;
+    args.reprojectionGuard=true;
     args.target=target; args.delta=delta; args.motion=p.bridge.MotionOf(frame);
     args.offset=std::clamp(static_cast<float>(timestamp-stamp.timestamp)/static_cast<float>(stamp.interval),-4.f,8.f);
     args.intensity=p.params.composeIntensity; args.maxDelta=p.params.maxDelta;

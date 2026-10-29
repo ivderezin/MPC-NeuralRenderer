@@ -101,6 +101,25 @@ int main() {
         Require(echo.Collect()==0,"EchoFG first/reset frame must not publish uninitialized interpolation");
         echo.Dispatch(gpu.list.Get(),current.Get(),outputs,3,false);gpu.Finish();
         Require(echo.Collect()==3,"Native EchoFG must produce all three temporal fractions");
+        framegen::EchoFrameGeneration guidance;
+        guidance.Create(gpu.device.Get(),w,h,false,true);
+        guidance.Dispatch(gpu.list.Get(),previous.Get(),{},0,true);gpu.Finish();
+        guidance.Dispatch(gpu.list.Get(),current.Get(),{},0,false);gpu.Finish();
+        Require(guidance.Collect()==0,"Motion-only guidance must not synthesize or publish frames");
+        const auto vectors=gpu.Read(guidance.Motion());
+        auto half=[](unsigned lo,unsigned hi) {
+            const unsigned bits=lo|(hi<<8),exp=(bits>>10)&31u,mantissa=bits&1023u;
+            const float value=exp ? std::ldexp(1.f+static_cast<float>(mantissa)/1024.f,static_cast<int>(exp)-15)
+                : std::ldexp(static_cast<float>(mantissa),-24);
+            return bits&32768u ? -value : value;
+        };
+        double motionError=0;unsigned motionSamples=0;
+        for(unsigned y=16;y<48;++y)for(unsigned x=32;x<88;++x) {
+            const auto at=(y*w+x)*4;
+            motionError+=std::abs(half(vectors[at],vectors[at+1])+8.f)+std::abs(half(vectors[at+2],vectors[at+3]));
+            ++motionSamples;
+        }
+        Require(motionError/motionSamples<1,"Vendor FG guidance must use final-frame backward motion in final-resolution pixels");
         double totalError=0;
         for(unsigned i=0;i<3;++i) {
             const auto pixels=gpu.Read(outputs[i]);

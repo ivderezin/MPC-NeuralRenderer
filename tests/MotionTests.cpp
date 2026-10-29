@@ -18,6 +18,7 @@
 #include "../Source/FrameGeneration/FrameContentProbe.h"
 #include "../Source/FrameGeneration/ExactInputRepeat.h"
 #include "../Source/EchoStorm/addon/compose11.h"
+#include "../Source/EchoStorm/engine/nr_shaders.h"
 #include <limits>
 using Microsoft::WRL::ComPtr;
 void Check(HRESULT result) { if (FAILED(result)) throw std::runtime_error("D3D11 test failed: " + std::to_string(static_cast<unsigned long>(result))); }
@@ -48,9 +49,9 @@ struct Gpu {
         if (bind & D3D11_BIND_UNORDERED_ACCESS) Check(device->CreateUnorderedAccessView(image.texture.Get(), nullptr, &image.uav));
         return image;
     }
-    ComPtr<ID3D11ComputeShader> Compile(const char* source) {
+    ComPtr<ID3D11ComputeShader> Compile(const char* source,const char* entry="main") {
         ComPtr<ID3DBlob> code, errors;
-        auto result = D3DCompile(source, strlen(source), "MotionTests", nullptr, nullptr, "main", "cs_5_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &code, &errors);
+        auto result = D3DCompile(source, strlen(source), "MotionTests", nullptr, nullptr, entry, "cs_5_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &code, &errors);
         if (FAILED(result) && errors) throw std::runtime_error(static_cast<const char*>(errors->GetBufferPointer()));
         Check(result);
         ComPtr<ID3D11ComputeShader> shader;
@@ -113,6 +114,31 @@ void TestEchoPresentation(Gpu& gpu) {
     Require(!compare(),"Non-finite samples must fail open");
     repeat.Invalidate();Require(!compare(),"Seek must invalidate repeat history");
 
+    // Verify the reference luminance is actually written by both NR delta paths,
+    // rather than only testing a hand-authored composition input.
+    auto nrConstants=ComPtr<ID3D11Buffer>();D3D11_BUFFER_DESC nrDesc{};
+    nrDesc.ByteWidth=48;nrDesc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+    Check(gpu.device->CreateBuffer(&nrDesc,nullptr,&nrConstants));
+    const UINT nrData[12]={w,h,w,h,0,0,0,0,0,0,0,0};
+    gpu.context->UpdateSubresource(nrConstants.Get(),0,nullptr,nrData,0,0);
+    std::vector<float> proxyData(w*h*4,.2f),modelData(w*h*4,.3f);
+    auto proxy=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,proxyData.data(),w*16);
+    auto model=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,modelData.data(),w*16);
+    auto difference=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+    auto smoothHistory=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+    for(unsigned pass=0;pass<2;++pass) {
+        const auto shader=gpu.Compile(pass ? kNrSmoothHlsl : kNrModelHlsl,pass ? "CSDeltaSmooth" : "CSDelta");
+        ID3D11ShaderResourceView* inputs[]={nullptr,proxy.srv.Get(),model.srv.Get(),nullptr};
+        ID3D11UnorderedAccessView* outputs[]={difference.uav.Get(),pass ? smoothHistory.uav.Get() : nullptr};
+        ID3D11Buffer* cb=nrConstants.Get();
+        gpu.context->CSSetShader(shader.Get(),nullptr,0);gpu.context->CSSetShaderResources(0,4,inputs);
+        gpu.context->CSSetConstantBuffers(0,1,&cb);gpu.context->CSSetUnorderedAccessViews(0,2,outputs,nullptr);
+        gpu.context->Dispatch((w+7)/8,(h+7)/8,1);
+        std::fill(std::begin(inputs),std::end(inputs),nullptr);outputs[0]=outputs[1]=nullptr;
+        gpu.context->CSSetShaderResources(0,4,inputs);gpu.context->CSSetUnorderedAccessViews(0,2,outputs,nullptr);
+        const auto result=gpu.Read(difference,4);
+        Require(std::abs(result[0]-.1f)<.0001f && std::abs(result[3]-.2f)<.0001f,"NR delta must retain source luma for reprojection validation");
+    }
     Compose11 compose;
     Require(compose.Init(gpu.device.Get(),[](const char* message){std::cerr<<message<<'\n';}),"Native NR compose initialization");
     std::vector<float> deltaPixels(w*h*4,0);
@@ -142,6 +168,28 @@ void TestEchoPresentation(Gpu& gpu) {
         }
         gpu.context->Unmap(staging.Get(),0);
       }
+    }
+    for(unsigned test=0;test<4;++test) {
+        std::vector<float> correction(w*h*4,.1f), motionPixels(w*h*2,0.f);
+        for(UINT i=0;i<w*h;++i) {
+            correction[i*4+3]=test==1 ? .8f : .2f;
+            if(test==3)motionPixels[i*2]=-static_cast<float>(w);
+        }
+        auto correctionImage=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,correction.data(),w*16);
+        auto motion=gpu.Texture(w,h,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_SHADER_RESOURCE,motionPixels.data(),w*8);
+        std::vector<UINT> base(w*h,0xff333333u);
+        auto target=gpu.Texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_RENDER_TARGET,base.data(),w*4);
+        Compose11::Args args;args.target=target.texture.Get();args.delta=correctionImage.srv.Get();args.motion=motion.srv.Get();
+        args.reprojectionGuard=true;args.hiProtect=1;args.offset=test==2 ? 3.f : test==3 ? 1.f : 0.f;
+        Require(compose.Run(gpu.context.Get(),args),"Guarded NR compose");
+        D3D11_TEXTURE2D_DESC d{};target.texture->GetDesc(&d);d.BindFlags=0;d.Usage=D3D11_USAGE_STAGING;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+        ComPtr<ID3D11Texture2D> staging;Check(gpu.device->CreateTexture2D(&d,nullptr,&staging));
+        gpu.context->CopyResource(staging.Get(),target.texture.Get());
+        D3D11_MAPPED_SUBRESOURCE read{};Check(gpu.context->Map(staging.Get(),0,D3D11_MAP_READ,0,&read));
+        const auto value=static_cast<const unsigned char*>(read.pData)[(h/2)*read.RowPitch+(w/2)*4];
+        Require(test ? value==51 : value>=76 && value<=77,
+            "NR must retain matching fresh correction and reject mismatched, stale and offscreen reprojections");
+        gpu.context->Unmap(staging.Get(),0);
     }
     compose.Shutdown();
 }

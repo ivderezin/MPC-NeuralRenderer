@@ -383,6 +383,8 @@ struct NeuralPass::Impl {
                                                                         : L"Off");
         if (options.FsrNative())
             message << L" (AMDLSS5 bridge inputs; external NR unverified)";
+        if (options.ManualGeneration() && options.frameGenerator == processing::FrameGenerator::Dlss && options.motionMethod == MotionMethod::EchoStorm)
+            message << L"\nDLSS FG guidance: native EchoStorm, final-frame resolution";
         if (options.frameGenerator != processing::FrameGenerator::Xess) {
             message << L"\n" << processing::Name(options.frameGenerator) << L": ";
             if (fgUsable && fgLimitedByDisplay)
@@ -658,7 +660,7 @@ struct NeuralPass::Impl {
         if (options.frameGenerator == processing::FrameGenerator::Dlss && !coreInitialized)
             throw std::runtime_error("Driver NGX initialization failed");
         frameGeneration.Create(options.frameGenerator, device12.Get(), list.Get(), width, height, outWidth, outHeight,
-                               ModuleDirectory(), hdr);
+                               ModuleDirectory(), hdr, options.motionMethod == MotionMethod::EchoStorm);
         for (unsigned i = 0; i < 3; ++i) {
             generated[i].Create(device11.Get(), device12.Get(), outWidth, outHeight, hdr ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM);
             for (auto& slot : displayGenerated)

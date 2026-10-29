@@ -17,7 +17,7 @@ struct EchoFrameGeneration::Impl {
     nr::FlowFix repair;
     ComPtr<ID3D12Resource> before, motion, distrust, repaired;
     unsigned width=0,height=0,scale=1,slot=0,pending=0;
-    bool hdr=false,haveBefore=false;
+    bool hdr=false,haveBefore=false,motionOnly=false;
     std::string error;
     ~Impl() { estimate.Shutdown(); }
     ComPtr<ID3D12Resource> Texture(ID3D12Device* device,unsigned w,unsigned h,DXGI_FORMAT format,D3D12_RESOURCE_STATES state) {
@@ -34,16 +34,16 @@ struct EchoFrameGeneration::Impl {
 };
 EchoFrameGeneration::EchoFrameGeneration()=default;
 EchoFrameGeneration::~EchoFrameGeneration()=default;
-void EchoFrameGeneration::Create(ID3D12Device* device,unsigned width,unsigned height,bool hdr) {
+void EchoFrameGeneration::Create(ID3D12Device* device,unsigned width,unsigned height,bool hdr,bool motionOnly) {
     auto next=std::make_unique<Impl>();
-    next->width=width; next->height=height; next->hdr=hdr;
+    next->width=width; next->height=height; next->hdr=hdr; next->motionOnly=motionOnly;
     next->scale=width>2560 ? 2u : 1u;
     auto log=[p=next.get()](const char* message) { p->error=message; };
-    if (!next->estimate.Init(device,log) || !next->repair.Init(device,log) || !next->synth.Init(device,log))
+    if (!next->estimate.Init(device,log) || !next->repair.Init(device,log) || (!motionOnly && !next->synth.Init(device,log)))
         throw std::runtime_error("Initialize EchoFG: "+next->error);
     const unsigned aw=(width+next->scale-1)/next->scale, ah=(height+next->scale-1)/next->scale;
     next->estimate.SetInputScale(static_cast<int>(next->scale));
-    if (!next->estimate.Ensure(aw,ah) || !next->repair.Ensure(aw,ah,next->scale,width,height) || !next->synth.Ensure(width,height))
+    if (!next->estimate.Ensure(aw,ah) || !next->repair.Ensure(aw,ah,next->scale,width,height) || (!motionOnly && !next->synth.Ensure(width,height)))
         throw std::runtime_error("Allocate EchoFG: "+next->error);
     next->before=next->Texture(device,width,height,hdr ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_STATE_COPY_DEST);
     next->motion=next->Texture(device,aw,ah,DXGI_FORMAT_R16G16_FLOAT,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -54,7 +54,7 @@ void EchoFrameGeneration::Create(ID3D12Device* device,unsigned width,unsigned he
 void EchoFrameGeneration::Dispatch(ID3D12GraphicsCommandList* list,ID3D12Resource* color,
     const std::array<ID3D12Resource*,3>& output,unsigned count,bool reset) {
     auto& p=*impl_;
-    count=(std::min)(count,3u); p.pending=0;
+    count=p.motionOnly ? 0u : (std::min)(count,3u); p.pending=0;
     if (reset) { p.estimate.Forget(); p.haveBefore=false; }
     const auto format=color->GetDesc().Format;
     const unsigned encoding=p.hdr ? 2u : 0u;
@@ -86,5 +86,6 @@ void EchoFrameGeneration::Dispatch(ID3D12GraphicsCommandList* list,ID3D12Resourc
     if (!repaired || (expected && !made)) throw std::runtime_error("Record EchoFG: "+p.error);
     p.pending=made ? count : 0;
 }
+ID3D12Resource* EchoFrameGeneration::Motion() const { return impl_ ? impl_->repaired.Get() : nullptr; }
 unsigned EchoFrameGeneration::Collect() const { return impl_ ? impl_->pending : 0; }
 }

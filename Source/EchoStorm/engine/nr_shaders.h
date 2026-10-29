@@ -54,7 +54,7 @@ void CSFlowToMvec(uint3 id : SV_DispatchThreadID) {
 [numthreads(8, 8, 1)]
 void CSDelta(uint3 id : SV_DispatchThreadID) {
     if (id.x >= outSize.x || id.y >= outSize.y) return;
-    uOut[id.xy] = float4(tModel[id.xy].rgb - tProxy[id.xy].rgb, 0);
+    uOut[id.xy] = float4(tModel[id.xy].rgb - tProxy[id.xy].rgb, dot(tProxy[id.xy].rgb, float3(0.299, 0.587, 0.114)));
 }
 )HLSL";
 
@@ -107,7 +107,7 @@ void CSDeltaSmooth(uint3 id : SV_DispatchThreadID) {
         const float w = lerp(saturate(smoothAmount), max(saturate(smoothAmount), stableWeight), agree * agree);
         delta = lerp(delta, history, w * lerp(1.0 - fast, 1.0, agree));
     }
-    uOut[id.xy] = float4(delta, 0);
+    uOut[id.xy] = float4(delta, dot(tProxy[id.xy].rgb, float3(0.299, 0.587, 0.114)));
     uHistory[id.xy] = float4(delta, dot(tProxy[id.xy].rgb, float3(0.299, 0.587, 0.114)));   // the frame's brightness, for the next run's check
 }
 )HLSL";

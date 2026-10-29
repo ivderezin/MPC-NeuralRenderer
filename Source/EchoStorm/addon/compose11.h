@@ -24,6 +24,7 @@ public:
         ID3D11Resource* flow = nullptr; uint32_t flowW = 0, flowH = 0; float flowUnit = 2.0f;   // LSFG's flow (RGBA16F), or null
         ID3D11ShaderResourceView* motion = nullptr;    // or the model's motion for frame d (RG16F, working-size pixels, d -> the frame before):
                                                        // the result is moved along it, `offset` frames on (frame generation off)
+        bool reprojectionGuard = false;                // MPC: alpha carries the source proxy's luma; reject stale/mismatched projections
         float offset = 0;                              // the presented frame minus d, in real frames
         float intensity = 1, maxDelta = 0.5f, hiProtect = 0.85f; uint32_t debugView = 0; bool isGen = false;
         float darkGuard = 0.04f;                       // see NrParams: a pixel darker than this takes no positive change; 0 = off

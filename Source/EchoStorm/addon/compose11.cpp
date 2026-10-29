@@ -181,12 +181,23 @@ void CSCompose(uint3 id : SV_DispatchThreadID, uint3 gid : SV_GroupID, uint3 gt 
             uint mw, mh; tMotion.GetDimensions(mw, mh);
             uvInD = uvF + offset * tMotion.SampleLevel(sLinear, uvF, 0) / float2(mw, mh);
         }
-        const float ghost = GhostWeight(flow);
+        const float4 deltaSample = tDelta.SampleLevel(sLinear, uvInD, 0);
+        float ghost = GhostWeight(flow);
+        if ((flags & 16u) != 0u) {
+            // A single field from the NR job is only a velocity hypothesis, not
+            // measured flow to this presented frame. Validate it against the
+            // actual source proxy, especially at disocclusions and camera turns.
+            const float mismatch = abs(dot(fs, kLuma) - deltaSample.a);
+            const float match = 1.0 - smoothstep(0.04, 0.16, mismatch);
+            const float age = 1.0 - smoothstep(1.0, 3.0, abs(offset));
+            const float inside = all(uvInD >= 0.0) && all(uvInD <= 1.0) ? 1.0 : 0.0;
+            ghost *= match * age * inside;
+        }
         const float highlightFade = hiProtect < 0.999 ? 1.0 - smoothstep(hiProtect, 1.0, dot(fs, kLuma)) : 1.0;
         // The model's result is smaller than the frame and is stretched over it, so next to a sharp edge (a HUD box on black) it spills onto the black side as a glow, and
         // as a tint of the black (measured: a green lean, twice as strong at a quarter of the frame as at 0.6). A pixel darker than darkGuard (0.04 of the picture's own view, about 10 of 255, by default) takes no positive change.
         const float darkFade = darkGuard > 0.0005 ? smoothstep(0.0, darkGuard, max(fs.r, max(fs.g, fs.b))) : 1.0;
-        const float3 dFull = clamp(tDelta.SampleLevel(sLinear, uvInD, 0).rgb * ghost * intensity, -maxDelta, maxDelta) * highlightFade;
+        const float3 dFull = clamp(deltaSample.rgb * ghost * intensity, -maxDelta, maxDelta) * highlightFade;
         const float3 d = lerp(min(dFull, 0.0), dFull, darkFade);
         c = saturate(fs + d);
         if (plain) {
@@ -442,7 +453,7 @@ bool Compose11::Run(ID3D11DeviceContext* ctx, const Args& a) {
     Constants c{};
     c.w = desc.Width; c.h = desc.Height; c.offset = a.offset; c.intensity = a.intensity; c.maxDelta = a.maxDelta; c.hiProtect = a.hiProtect;
     const bool moved = !flowView && a.motion;
-    c.debugView = a.debugView; c.flags = (flowView ? 1u : 0u) | (a.isGen ? 2u : 0u) | (a.hudShow ? 4u : 0u) | (moved ? 8u : 0u);
+    c.debugView = a.debugView; c.flags = (flowView ? 1u : 0u) | (a.isGen ? 2u : 0u) | (a.hudShow ? 4u : 0u) | (moved ? 8u : 0u) | (a.reprojectionGuard ? 16u : 0u);
     c.uvPerUnitX = flowView && a.flowW ? 1.0f / (unit * a.flowW) : 0.0f; c.uvPerUnitY = flowView && a.flowH ? 1.0f / (unit * a.flowH) : 0.0f;
     c.ghostGuard = flowView ? std::clamp(a.ghostGuard, 0.0f, 1.0f) : 0.0f; c.flowPxPerUnit = 1.0f / unit;
     c.sharpen = a.sharpen; c.compare = a.compare; c.splitPos = a.splitPos; c.marker = a.marker;

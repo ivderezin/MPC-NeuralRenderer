@@ -6,11 +6,14 @@
 #include "EchoGuard.h"
 #include "../Processing/FsrApi.h"
 #include <ffx/framegeneration/include/ffx_framegeneration.h>
+#include <cstring>
 namespace framegen {
 struct GenerationStage::Impl {
     processing::FrameGenerator provider = processing::FrameGenerator::Dlss;
     DlssMultiFrameGeneration dlss;
-    EchoFrameGeneration echo;
+    EchoFrameGeneration echo, guidance;
+    Microsoft::WRL::ComPtr<ID3D12Resource> guideDepth, depthUpload;
+    bool nativeEchoMotion=false;
     EchoGuard guard;
     processing::FsrApi fsr;
     ffxContext context = nullptr;
@@ -29,7 +32,7 @@ void GenerationStage::Reset() {
 }
 void GenerationStage::Create(processing::FrameGenerator provider, ID3D12Device* device, ID3D12GraphicsCommandList* list,
                              unsigned width, unsigned height, unsigned outWidth, unsigned outHeight,
-                             const std::filesystem::path& directory, bool hdr) {
+                             const std::filesystem::path& directory, bool hdr, bool nativeEchoMotion) {
     impl_ = std::make_unique<Impl>();
     auto& p = *impl_;
     p.provider = provider;
@@ -44,7 +47,29 @@ void GenerationStage::Create(processing::FrameGenerator provider, ID3D12Device* 
     }
     if (provider == processing::FrameGenerator::Dlss) {
         p.guard.Create(device,outWidth,outHeight,hdr);
-        p.dlss.Create(device, list, width, height, outWidth, outHeight, hdr);
+        p.nativeEchoMotion=nativeEchoMotion;
+        if (nativeEchoMotion) {
+            p.guidance.Create(device,outWidth,outHeight,hdr,true);
+            // DLSS now receives vectors at final colour resolution. Depth is still
+            // explicitly a flat fallback; capture provides no game depth.
+            D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_DEFAULT;heap.CreationNodeMask=heap.VisibleNodeMask=1;
+            D3D12_RESOURCE_DESC d{};d.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;d.Width=outWidth;d.Height=outHeight;
+            d.DepthOrArraySize=1;d.MipLevels=1;d.SampleDesc.Count=1;d.Format=DXGI_FORMAT_R32_FLOAT;
+            ngx::CheckHr(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&p.guideDepth)),"Create final-resolution FG depth");
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};UINT64 bytes=0;
+            device->GetCopyableFootprints(&d,0,1,0,&footprint,nullptr,nullptr,&bytes);
+            heap.Type=D3D12_HEAP_TYPE_UPLOAD;d={};d.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;d.Width=bytes;
+            d.Height=1;d.DepthOrArraySize=1;d.MipLevels=1;d.SampleDesc.Count=1;d.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+            ngx::CheckHr(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&p.depthUpload)),"Create FG depth initialization");
+            void* data=nullptr;const D3D12_RANGE empty{0,0};
+            ngx::CheckHr(p.depthUpload->Map(0,&empty,&data),"Initialize FG depth");
+            std::memset(data,0,static_cast<size_t>(bytes));p.depthUpload->Unmap(0,nullptr);
+            D3D12_TEXTURE_COPY_LOCATION dst{},src{};dst.pResource=p.guideDepth.Get();dst.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            src.pResource=p.depthUpload.Get();src.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;src.PlacedFootprint=footprint;
+            list->CopyTextureRegion(&dst,0,0,0,&src,nullptr);
+            ngx::Transition(list,p.guideDepth.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        }
+        p.dlss.Create(device, list, nativeEchoMotion ? outWidth : width, nativeEchoMotion ? outHeight : height, outWidth, outHeight, hdr);
         return;
     }
     if (provider != processing::FrameGenerator::Fsr)
@@ -84,8 +109,15 @@ void GenerationStage::Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* 
         return;
     }
     if (p.provider == processing::FrameGenerator::Dlss) {
-        ngx::Check(p.dlss.Evaluate(list, color, depth, motion, output, count, reset), "Dispatch DLSS MFG");
-        p.guard.Dispatch(list,color,motion,output,count,reset);
+        if (p.nativeEchoMotion) {
+            p.guidance.Dispatch(list,color,{},0,reset);
+            motion=p.guidance.Motion();depth=p.guideDepth.Get();
+            ngx::Transition(list,motion,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        }
+        const auto result=p.dlss.Evaluate(list, color, depth, motion, output, count, reset);
+        if (result==NVSDK_NGX_Result_Success) p.guard.Dispatch(list,color,motion,output,count,reset);
+        if (p.nativeEchoMotion) ngx::Transition(list,motion,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        ngx::Check(result,"Dispatch DLSS MFG");
         return;
     }
     ++p.frameId;
