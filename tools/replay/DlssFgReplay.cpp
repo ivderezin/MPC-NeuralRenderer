@@ -257,7 +257,7 @@ int wmain(int argc,wchar_t** argv) {
                 gpu.Finish();
                 if(result!=NVSDK_NGX_Result_Success) {
                     report<<"evaluation_failed_at_step="<<step<<"; ngx_status=0x"<<std::hex<<static_cast<unsigned>(result)<<std::dec<<'\n';
-                    evaluationFailed=true;break;
+                    evaluationFailed=true;published=0;break;
                 }
                 published=generator.Collect();
             }
