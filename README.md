@@ -79,6 +79,8 @@ FSR 3.1 FG поддерживает **2x**. DLSS и XeSS используют д
 
 ### Данные видео и ограничения
 
+Для диагностики плавности при **Show statistics** доступны **Content samples** (разница исходных и обработанных кадров, число входов с неизменившимися отсчётами) и **FG sampled delta (current/previous real)** — отличие каждого промежуточного кадра от обоих реальных концов интервала. Единицы — уровни RGB из 255. Проверяются 2304 точки, поэтому нулевое значение не доказывает полное совпадение изображений; эти данные используются только для диагностики, не для пропуска кадров. Сравнивайте строки при одинаковом движении камеры с NR on/off вместе с Processing, Output и DXGI shown.
+
 - Нейрообработка доступна для Windows x64 и SDR, включая 10-битные SDR-видео и внутренние RGB-текстуры 8-bit / RGB10A2 / float16. Перед NR, SR и DLSS/FSR FG RGB нормализуется в 8-битный SDR-вход модели: исходная 10-битная точность на этом этапе не сохраняется.
 - HDR10, HLG, Dolby Vision и RTX Video HDR проходят цветовые преобразования рендерера до нейрообработки. При HDR-выводе модель NR / SR получает SDR-представление кадра, а её изменения возвращаются на исходный HDR в линейном свете. Неизменённое представление сохраняет исходные яркость и широкий цветовой охват; выход восстанавливается в 10-битный PQ / BT.2020. DLSS MFG и FSR FG затем работают уже с восстановленным HDR-кадром и соответствующими HDR-параметрами. Это обработка через SDR-представление, а не нативный HDR-вход модели NR/SR.
 - При HDR → SDR нейрообработка выполняется после встроенного тонмаппинга; коррекции не применяются повторно к готовым и сгенерированным кадрам. XeSS FG по-прежнему требует 8-битного SDR swap chain. Стереопреобразование обходит нейрообработку. GPU-тесты проверяют HDR-математику, сохранение чёрного, светов и BT.2020, восстановление после апскейла и перенос изменений модели. При проблемах на другой конфигурации приложите к issue версию сборки, GPU/драйвер, режим HDR и скриншот статистики.
@@ -200,6 +202,8 @@ With neural processing enabled, the order is: **RGB conversion and colour correc
 Both NR passes increase GPU load, especially when the second processes 4K. Without increased resolution, built-in NR runs once regardless of NR stage.
 
 ### Video inputs and limitations
+
+With **Show statistics**, **Content samples** reports raw/processed frame differences and the number of inputs with unchanged samples. **FG sampled delta (current/previous real)** compares each generated frame with both real endpoints, in RGB levels out of 255. The probe checks 2,304 points: zero does not prove full-frame equality. These measurements are diagnostic only and never decide to skip frames. Compare them during the same camera movement with NR on/off, alongside Processing, Output, and DXGI shown.
 
 - Neural processing supports Windows x64 SDR, including 10-bit SDR video and 8-bit / RGB10A2 / float16 RGB internal textures. Before NR, SR, and DLSS/FSR FG, RGB is normalized into an 8-bit SDR model input; original 10-bit precision is not retained at that stage.
 - HDR10, HLG, Dolby Vision, and RTX Video HDR pass through the renderer's colour conversion before neural processing. With HDR output, NR/SR receive an SDR proxy; their changes are composited onto the original HDR frame in linear light. An unchanged proxy preserves original luminance and wide gamut; output is restored to 10-bit PQ / BT.2020. DLSS MFG and FSR FG then process the restored HDR frame using the appropriate HDR settings. This uses an SDR proxy, rather than native HDR input to NR/SR.

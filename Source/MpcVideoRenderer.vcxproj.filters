@@ -32,6 +32,7 @@
     <ClInclude Include="Upscaling\MotionAdaptiveShaders.h"><Filter>Upscaling</Filter></ClInclude>
     <ClInclude Include="Upscaling\DlssSuperResolution.h"><Filter>Upscaling</Filter></ClInclude>
     <ClInclude Include="FrameGeneration\DlssMultiFrameGeneration.h"><Filter>FrameGeneration</Filter></ClInclude>
+    <ClInclude Include="FrameGeneration\FrameContentProbe.h"><Filter>FrameGeneration</Filter></ClInclude>
     <ClInclude Include="FrameGeneration\DisplayCadence.h"><Filter>FrameGeneration</Filter></ClInclude>
     <ClInclude Include="FrameGeneration\FramePlan.h"><Filter>FrameGeneration</Filter></ClInclude>
     <ClInclude Include="FrameGeneration\PresentationTimer.h"><Filter>FrameGeneration</Filter></ClInclude>

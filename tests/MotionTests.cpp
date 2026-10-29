@@ -15,6 +15,7 @@
 #include "../Source/NeuralRendering/MotionEstimator.h"
 #include "../Source/NeuralRendering/MotionRepair.h"
 #include "../Source/Upscaling/MotionAdaptiveShaders.h"
+#include "../Source/FrameGeneration/FrameContentProbe.h"
 using Microsoft::WRL::ComPtr;
 void Check(HRESULT result) { if (FAILED(result)) throw std::runtime_error("D3D11 test failed: " + std::to_string(static_cast<unsigned long>(result))); }
 void Require(bool result, const char* message) { if (!result) throw std::runtime_error(message); }
@@ -297,6 +298,41 @@ int main() {
                 Require(std::abs(result[k]-(d==0 ? .9f : .25f))<.0001f,
                         "SR must retain trusted detail and replace untrusted history with this frame for every provider");
         }
+        // Probe the actual production diagnostic without affecting frame history.
+        framegen::FrameContentProbe probe;
+        auto probeImage=[&](UINT w,UINT h,float v) {
+            std::vector<float> rgba(static_cast<size_t>(w)*h*4,v);
+            return gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,rgba.data(),w*16);
+        };
+        auto rawA=probeImage(13,11,.2f), rawB=probeImage(13,11,.4f);
+        auto realA=probeImage(7,5,.2f), realB=probeImage(7,5,.3f), realC=probeImage(7,5,.4f);
+        auto middle=probeImage(7,5,.25f);
+        auto finishProbe=[&]() {
+            gpu.context->Flush(); // tests may wait; the production Collect never flushes or waits
+            for (unsigned i=0;i<5000 && probe.Pending();++i) {
+                probe.Collect(gpu.context.Get());
+                if (probe.Pending()) Sleep(1);
+            }
+            Require(!probe.Pending(),"Content probe must complete on WARP");
+        };
+        probe.Submit(gpu.context.Get(),rawA.texture.Get(),realA.texture.Get(),{},0);
+        Require(!probe.Pending() && probe.metrics.samples==0,"First diagnostic frame must only establish endpoints");
+        probe.Submit(gpu.context.Get(),rawA.texture.Get(),realB.texture.Get(),{middle.texture.Get(),nullptr,nullptr},1);
+        finishProbe();
+        Require(probe.metrics.samples==1 && probe.metrics.unchangedInputs==1 && probe.metrics.delta[0]==0,
+                "Repeated raw input must be visible even if NR changes its output");
+        Require(std::abs(probe.metrics.delta[1]-25.5f)<.001f &&
+                std::abs(probe.metrics.delta[2]-12.75f)<.001f && std::abs(probe.metrics.delta[3]-12.75f)<.001f,
+                "Content diagnostics must compare generated frames against both correct real endpoints");
+        probe.Submit(gpu.context.Get(),rawB.texture.Get(),realC.texture.Get(),{realC.texture.Get(),nullptr,nullptr},1);
+        finishProbe();
+        Require(probe.metrics.samples==2 && probe.metrics.unchangedInputs==1 && probe.metrics.delta[2]==0 &&
+                std::abs(probe.metrics.delta[0]-51.f)<.001f,
+                "A generated copy of the current endpoint must be distinguishable from changing raw input");
+        probe.Submit(gpu.context.Get(),rawA.texture.Get(),realA.texture.Get(),{},0);
+        probe.Invalidate();
+        finishProbe();
+        Require(probe.metrics.samples==0,"Invalidated pre-seek probe results must not reappear");
         auto crop=gpu.Texture(13,11,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
         auto prepare=gpu.Compile(neural::PrepareShader.c_str());
         gpu.Dispatch(prepare.Get(),previous,nullptr,crop,13,11,0,5,7);

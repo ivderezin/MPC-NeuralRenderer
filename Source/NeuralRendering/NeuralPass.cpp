@@ -6,6 +6,7 @@
 #include "MotionShaders.h"
 #include "MotionEstimator.h"
 #include "MotionRepair.h"
+#include "../FrameGeneration/FrameContentProbe.h"
 #include "../Upscaling/UpscaleStage.h"
 #include "../FrameGeneration/GenerationStage.h"
 #include "../FrameGeneration/GenerationPolicy.h"
@@ -232,6 +233,8 @@ struct NeuralPass::Impl {
     neural::MotionRepair motionRepair;
     SharedTexture repairedVectors, upscaleDistrust;
     FrameHistory history;
+    framegen::FrameContentProbe contentProbe;
+    bool diagnosticsEnabled = false, diagnosticsFailed = false;
     Settings options;
     upscaling::Extent target{}, monitor{};
     double refreshHz = 60;
@@ -308,6 +311,7 @@ struct NeuralPass::Impl {
         return completed;
     }
     void Invalidate() {
+        contentProbe.Invalidate();
         history.Clear();
         asyncOutput.Invalidate();
         lastCompletion = {};
@@ -385,6 +389,18 @@ struct NeuralPass::Impl {
             message << std::fixed << std::setprecision(1) << L"\nProcessing: " << completedFps << L" fps, GPU "
                     << gpuMilliseconds << L" ms, prepare " << preparationMilliseconds << L" ms (async), init "
                     << initMilliseconds << L" ms";
+        if (diagnosticsEnabled && contentProbe.metrics.samples) {
+            const auto& data=contentProbe.metrics;
+            message << std::fixed << std::setprecision(3) << L"\nContent samples: raw delta " << data.delta[0]
+                    << L", real delta " << data.delta[1] << L" /255; unchanged input "
+                    << data.unchangedInputs << L"/" << data.samples;
+            if (data.generated) {
+                message << L"\nFG sampled delta (current/previous real): ";
+                for (unsigned i=0;i<data.generated;++i)
+                    message << (i ? L", " : L"") << data.delta[2+i*2] << L"/" << data.delta[3+i*2];
+            }
+        } else if (diagnosticsEnabled && diagnosticsFailed)
+            message << L"\nContent samples: unavailable (probe failed; processing unchanged)";
         return message.str();
     }
     void Begin() {
@@ -732,6 +748,10 @@ struct NeuralPass::Impl {
                 begin ? D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE : D3D12_RESOURCE_STATE_COMMON);
     }
     ID3D11Texture2D* Run(ID3D11Texture2D* frame, long long timestamp, float defaultFrameTimeMs) {
+        if (diagnosticsEnabled && !diagnosticsFailed) {
+            try { contentProbe.Collect(context11.Get()); }
+            catch (...) { diagnosticsFailed=true; }
+        }
         if (!nrUsable && !nrPostUsable && !srUsable && !fgUsable && !recreateFG) {
             asyncOutput.Invalidate();
             published = nullptr;
@@ -740,6 +760,7 @@ struct NeuralPass::Impl {
         }
         const auto action = history.Classify(timestamp);
         if (action == FrameHistory::Action::Reset) {
+            contentProbe.Invalidate();
             asyncOutput.Invalidate();
             published = nullptr;
             generatedCount = 0;
@@ -760,6 +781,12 @@ struct NeuralPass::Impl {
                 ++discardedBatches;
             for (unsigned i = 0; i < generatedCount; ++i)
                 context11->CopyResource(displayGenerated[slot][i].Get(), generated[i].texture.Get());
+            if (diagnosticsEnabled && !diagnosticsFailed) {
+                std::array<ID3D11Texture2D*,3> probeFrames{};
+                for (unsigned i=0;i<generatedCount;++i) probeFrames[i]=displayGenerated[slot][i].Get();
+                try { contentProbe.Submit(context11.Get(), color.texture.Get(), published, probeFrames, generatedCount); }
+                catch (...) { diagnosticsFailed=true; }
+            }
             slotSerial[slot] = serial;
             slotGenerated[slot] = generatedCount;
             outputDuration = pendingDuration;
@@ -1037,7 +1064,7 @@ void NeuralPass::ClearHistory() {
 }
 ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture2D* frame,
                                      const RECT& rect, long long timestamp, bool hdr, SIZE targetSize, SIZE monitorSize,
-                                     double refreshHz, float frameTimeMs) {
+                                     double refreshHz, float frameTimeMs, bool diagnostics) {
     if (!Enabled())
         return nullptr;
     const upscaling::Extent requestedTarget{static_cast<unsigned>((std::max)(1L, targetSize.cx)),
@@ -1093,6 +1120,8 @@ ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* 
             impl_->initMilliseconds = 1000.0 * static_cast<double>(end.QuadPart - start.QuadPart) / frequency.QuadPart;
         }
         impl_->refreshHz = refreshHz;
+        if (impl_->diagnosticsEnabled != diagnostics) impl_->contentProbe.Invalidate();
+        impl_->diagnosticsEnabled=diagnostics;
         auto result = impl_->Run(frame, timestamp, frameTimeMs);
         status_ = impl_->Status();
         return result;
@@ -1123,7 +1152,7 @@ void NeuralPass::ResetDevice() {
 }
 void NeuralPass::ClearHistory() {}
 ID3D11Texture2D* NeuralPass::Process(ID3D11Device*, ID3D11DeviceContext*, ID3D11Texture2D*, const RECT&, long long,
-                                     bool, SIZE, SIZE, double, float) {
+                                     bool, SIZE, SIZE, double, float, bool) {
     return nullptr;
 }
 unsigned NeuralPass::GeneratedCount() const {

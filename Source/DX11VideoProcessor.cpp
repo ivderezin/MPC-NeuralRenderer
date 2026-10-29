@@ -3972,7 +3972,7 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
 	if (bNeural) {
 		if (auto* texture = m_neuralPass.Process(m_pDevice, m_pDeviceContext, pInputTexture->pTexture, rSrc, m_neuralFrameTimestamp, m_pDXGISwapChain4 != nullptr,
 			dstRect.Size(), m_neuralMonitorSize, m_neuralRefreshHz,
-			static_cast<float>(m_rtAvgTimePerFrame > 0 ? m_rtAvgTimePerFrame : 166667) / 10000.0f)) {
+			static_cast<float>(m_rtAvgTimePerFrame > 0 ? m_rtAvgTimePerFrame : 166667) / 10000.0f, m_bShowStats)) {
 			if (m_TexNeural.pTexture != texture) {
 				m_TexNeural.Release();
 				if (SUCCEEDED(m_pDevice->CreateShaderResourceView(texture, nullptr, &m_TexNeural.pShaderResource))) {

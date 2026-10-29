@@ -155,6 +155,7 @@
     <ClInclude Include="Upscaling\MotionAdaptiveShaders.h" />
     <ClInclude Include="Upscaling\DlssSuperResolution.h" />
     <ClInclude Include="FrameGeneration\DlssMultiFrameGeneration.h" />
+    <ClInclude Include="FrameGeneration\FrameContentProbe.h" />
     <ClInclude Include="FrameGeneration\DisplayCadence.h" />
     <ClInclude Include="FrameGeneration\FramePlan.h" />
     <ClInclude Include="FrameGeneration\PresentationTimer.h" />
