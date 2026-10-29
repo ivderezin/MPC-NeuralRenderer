@@ -16,6 +16,9 @@
 #include "../Source/NeuralRendering/MotionRepair.h"
 #include "../Source/Upscaling/MotionAdaptiveShaders.h"
 #include "../Source/FrameGeneration/FrameContentProbe.h"
+#include "../Source/FrameGeneration/ExactInputRepeat.h"
+#include "../Source/EchoStorm/addon/compose11.h"
+#include <limits>
 using Microsoft::WRL::ComPtr;
 void Check(HRESULT result) { if (FAILED(result)) throw std::runtime_error("D3D11 test failed: " + std::to_string(static_cast<unsigned long>(result))); }
 void Require(bool result, const char* message) { if (!result) throw std::runtime_error(message); }
@@ -84,9 +87,58 @@ struct Gpu {
         return pixels;
     }
 };
+void TestEchoPresentation(Gpu& gpu) {
+    const UINT w=17,h=9;
+    std::vector<float> pixels(w*h*4,.2f);
+    auto input=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,pixels.data(),w*16);
+    framegen::ExactInputRepeat repeat;
+    RECT roi{0,0,w,h};
+    auto compare=[&](bool reset=false) {
+        repeat.Record(gpu.context.Get(),input.texture.Get(),input.srv.Get(),roi,reset);
+        // A staging map here stands in for the renderer's existing completion fence.
+        gpu.Read(input,4);
+        return repeat.Same(gpu.context.Get());
+    };
+    Require(!compare(),"First input must be distinct");
+    Require(compare(),"Identical full-resolution input must repeat");
+    pixels[(w*h-1)*4+1]=.20001f;
+    gpu.context->UpdateSubresource(input.texture.Get(),0,nullptr,pixels.data(),w*16,0);
+    Require(!compare(),"One changed channel at odd image boundary must be distinct");
+    Require(compare(),"The updated input must become the repeat baseline");
+    roi={1,1,16,8};pixels[0]=.8f;
+    gpu.context->UpdateSubresource(input.texture.Get(),0,nullptr,pixels.data(),w*16,0);
+    Require(compare(),"Changes outside the video ROI must not trigger new content");
+    pixels[(w+1)*4]=std::numeric_limits<float>::quiet_NaN();
+    gpu.context->UpdateSubresource(input.texture.Get(),0,nullptr,pixels.data(),w*16,0);
+    Require(!compare(),"Non-finite samples must fail open");
+    repeat.Invalidate();Require(!compare(),"Seek must invalidate repeat history");
+
+    Compose11 compose;
+    Require(compose.Init(gpu.device.Get(),[](const char* message){std::cerr<<message<<'\n';}),"Native NR compose initialization");
+    std::vector<float> deltaPixels(w*h*4,.1f);
+    auto delta=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,deltaPixels.data(),w*16);
+    for (auto fmt:{DXGI_FORMAT_R8G8B8A8_UNORM,DXGI_FORMAT_B8G8R8A8_UNORM}) {
+        std::vector<UINT> base(w*h,0xff333333);
+        auto target=gpu.Texture(w,h,fmt,D3D11_BIND_RENDER_TARGET,base.data(),w*4);
+        Compose11::Args a;a.target=target.texture.Get();a.delta=delta.srv.Get();a.hiProtect=1;
+        Require(compose.Run(gpu.context.Get(),a),"Compose must support RGBA and BGRA swapchain buffers");
+        D3D11_TEXTURE2D_DESC d{};target.texture->GetDesc(&d);
+        d.BindFlags=0;d.Usage=D3D11_USAGE_STAGING;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+        ComPtr<ID3D11Texture2D> staging;Check(gpu.device->CreateTexture2D(&d,nullptr,&staging));
+        gpu.context->CopyResource(staging.Get(),target.texture.Get());
+        D3D11_MAPPED_SUBRESOURCE read{};Check(gpu.context->Map(staging.Get(),0,D3D11_MAP_READ,0,&read));
+        for(UINT y=0;y<h;++y) for(UINT x=0;x<w;++x) {
+            const auto* px=static_cast<const unsigned char*>(read.pData)+y*read.RowPitch+x*4;
+            Require(px[0]>=75 && px[0]<=78 && px[1]==px[0] && px[2]==px[0],"Delta must reach every presented pixel");
+        }
+        gpu.context->Unmap(staging.Get(),0);
+    }
+    compose.Shutdown();
+}
 int main() {
     try {
         Gpu gpu;
+        TestEchoPresentation(gpu);
         const UINT size=64;
         std::vector<float> oldPixels(size*size*4), newPixels(oldPixels.size());
         unsigned state=456789;

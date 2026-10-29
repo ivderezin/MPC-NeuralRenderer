@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include "EchoPresentationClock.h"
 namespace framegen {
 struct QueuedFrame {
     std::int64_t deadline = 0;
@@ -23,7 +24,8 @@ public:
     bool Pending() const { return count_ != 0; }
     std::int64_t NextDeadline() const { return frames_[0].deadline; }
     bool Add(std::int64_t now, std::int64_t duration, unsigned generated, double refreshHz, double clockHz,
-             unsigned long long batch, unsigned* skipped = nullptr, bool limitToDisplay = false) {
+             unsigned long long batch, unsigned* skipped = nullptr, bool limitToDisplay = false,
+             EchoPresentationClock* displayClock=nullptr) {
         if (duration <= 0 || !generated || !std::isfinite(clockHz) || clockHz <= 0)
             return false;
         generated = (std::min)(generated, 3u);
@@ -67,6 +69,12 @@ public:
         for (unsigned i = 0; i < frames; ++i) {
             added[i].deadline += shift;
             frames_[count_++] = added[i];
+        }
+        if (displayClock && !previousCount) {
+            std::array<std::int64_t,4> deadlines{};
+            for (unsigned i=0;i<count_;++i) deadlines[i]=frames_[i].deadline;
+            displayClock->Align(deadlines,count_,now,duration);
+            for (unsigned i=0;i<count_;++i) frames_[i].deadline=deadlines[i];
         }
         if (skipped) *skipped += discarded;
         return true;

@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include "EchoPresentationClock.h"
 namespace framegen {
 class FramePlan {
     std::array<std::int64_t,4> deadlines_{};
@@ -12,7 +13,7 @@ class FramePlan {
 public:
     void Clear() { count_ = next_ = 0; }
     void Start(std::int64_t now, std::int64_t duration, unsigned generated, double refreshHz, double clockHz,
-               bool limitToDisplay = false) {
+               bool limitToDisplay = false,EchoPresentationClock* displayClock=nullptr) {
         Clear();
         if (duration <= 0 || !generated || !std::isfinite(clockHz) || clockHz <= 0) return;
         generated = (std::min)(generated, 3u);
@@ -28,6 +29,7 @@ public:
             deadlines_[count_] = now + duration * texture / (generated+1);
             textures_[count_++] = texture;
         }
+        if (displayClock) displayClock->Align(deadlines_,count_,now,duration);
     }
     bool Pending() const { return next_ < count_; }
     std::int64_t NextDeadline() const { return deadlines_[next_]; }

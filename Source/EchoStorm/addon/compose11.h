@@ -52,6 +52,7 @@ private:
     bool FitCopy(const D3D11_TEXTURE2D_DESC& target, DXGI_FORMAT view);
     ID3D11UnorderedAccessView* TargetView(ID3D11Texture2D* target, DXGI_FORMAT view);   // a new view of the buffer (released by Run), or m_out
     ID3D11ShaderResourceView* FlowView(ID3D11Resource* flow);                            // cached per flow texture
+    bool Blit(ID3D11DeviceContext* ctx, ID3D11Texture2D* target);
     void DropCopy();
     void Log(const char* fmt, ...);
 
@@ -62,6 +63,8 @@ private:
     // written by a compute pass gets the result in m_out, which is then copied over it.
     ID3D11Texture2D* m_copy = nullptr; ID3D11ShaderResourceView* m_copyView = nullptr;
     ID3D11Texture2D* m_out = nullptr; ID3D11UnorderedAccessView* m_outView = nullptr;
+    ID3D11ShaderResourceView* m_blitView = nullptr;
+    ID3D11VertexShader* m_blitVs = nullptr; ID3D11PixelShader* m_blitPs = nullptr;
     uint32_t m_w = 0, m_h = 0; DXGI_FORMAT m_fmt = DXGI_FORMAT_UNKNOWN;
     ID3D11Resource* m_flow = nullptr; ID3D11ShaderResourceView* m_flowView = nullptr;
     double m_cpuMs = 0; uint64_t m_runs = 0; char m_targetInfo[96] = "none yet"; uint64_t m_lastFailure = 0;

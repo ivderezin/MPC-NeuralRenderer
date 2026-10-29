@@ -4,6 +4,7 @@
 #include "../EchoStorm/engine/nr_engine.h"
 #include "../EchoStorm/addon/bridge.h"
 #include "../EchoStorm/addon/compose11.h"
+#include "../EchoStorm/addon/auto_quality.h"
 #include "../Processing/RuntimeLibrary.h"
 #include <wrl/client.h>
 #include <atomic>
@@ -28,6 +29,7 @@ struct EchoNr::Impl {
     std::string error;
     bool bridgeReady=false,reset=true,hdr=false;
     NrParams params;
+    nr::AutoQuality quality;
     unsigned long long index=0,lastQueued=0;
     long long lastTimestamp=0;
     bool haveTimestamp=false;
@@ -122,10 +124,16 @@ void EchoNr::Submit(ID3D11Device* device,ID3D11DeviceContext* context,ID3D11Text
         p.params.intensity=std::clamp(settings.intensity/100.f,0.f,1.f);
         p.params.composeIntensity=(std::max)(1.f,settings.intensity/100.f);
         // Upstream's working-size control: keep full 1080p, reduce 4K to 1080p.
-        p.params.workingScale=(std::min)(1.f,1920.f/static_cast<float>(w));
+        const auto ceiling=(std::min)(1.f,1920.f/static_cast<float>(w));
+        if (!p.engine.Busy()) {
+            const auto stats=p.engine.Stats(); p.gpuMs=stats.nrMs;
+            const nr::AutoQuality::Settings budget{true,5.f,.25f,0.f};
+            p.quality.Update(GetTickCount64(),static_cast<float>(p.gpuMs),static_cast<float>(p.bridge.IntervalMs()),ceiling,budget);
+            p.bridge.SetRunEvery(p.quality.RunEvery());
+        }
+        p.params.workingScale=p.quality.Scale()>0 ? (std::min)(ceiling,p.quality.Scale()) : ceiling;
         if (!p.bridge.Ensure(w,h,desc.Format)) return;
         ++p.index;
-        if (!p.engine.Busy()) { const auto stats=p.engine.Stats(); p.gpuMs=stats.nrMs; }
         if (p.bridge.Submit(frame,nullptr,0,0,p.params,p.reset,p.index,false)) {
             long long interval=166667;
             if (p.lastQueued) {
@@ -159,7 +167,8 @@ void EchoNr::Compose(ID3D11DeviceContext* context,ID3D11Texture2D* target,const 
     args.viewport[2]=static_cast<float>(viewport.right-viewport.left)/desc.Width;
     args.viewport[3]=static_cast<float>(viewport.bottom-viewport.top)/desc.Height;
     p.bridge.BeginDeltaUse(frame);
-    p.compose.Run(context,args);
+    context->OMSetRenderTargets(0,nullptr,nullptr);
+    if (!p.compose.Run(context,args)) p.Log("Echo NR composition failed; base frame retained");
     p.bridge.EndDeltaUse(frame);
 }
 std::wstring EchoNr::Status() const {

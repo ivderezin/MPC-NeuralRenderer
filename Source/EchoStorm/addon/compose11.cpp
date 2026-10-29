@@ -2,7 +2,7 @@
 // Echo-Storm/ls-addon-manager, revision 8d3eac351d42480326290b0f8965127a630b44f2.
 // Copyright (c) 2026 Echo-Storm and andreiday. See ../EchoStorm-LICENSE.txt.
 #include "addon/compose11.h"
-#include "addon/bridge.h"
+
 #include "engine/hdr_hlsl.h"
 #include <d3dcompiler.h>
 #include <windows.h>
@@ -11,8 +11,19 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <wrl/client.h>
 
 namespace {
+DXGI_FORMAT EchoViewFormat(DXGI_FORMAT f) {
+    switch(f) {
+    case DXGI_FORMAT_R8G8B8A8_UNORM: case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: case DXGI_FORMAT_R8G8B8A8_TYPELESS: return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case DXGI_FORMAT_B8G8R8A8_UNORM: case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: case DXGI_FORMAT_B8G8R8A8_TYPELESS: return DXGI_FORMAT_B8G8R8A8_UNORM;
+    case DXGI_FORMAT_R10G10B10A2_UNORM: case DXGI_FORMAT_R10G10B10A2_TYPELESS: return DXGI_FORMAT_R10G10B10A2_UNORM;
+    case DXGI_FORMAT_R16G16B16A16_FLOAT: case DXGI_FORMAT_R16G16B16A16_TYPELESS: return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    default:return DXGI_FORMAT_UNKNOWN;
+    }
+}
+
 
 const char* const kComposeHlsl = NR_HDR_HLSL R"HLSL(
 SamplerState sLinear : register(s0);
@@ -296,14 +307,14 @@ bool Compose11::Init(ID3D11Device* dev, LogFn log) {
 }
 
 void Compose11::DropCopy() {
-    SafeRelease(m_copyView); SafeRelease(m_copy); SafeRelease(m_outView); SafeRelease(m_out);
+    SafeRelease(m_copyView); SafeRelease(m_copy); SafeRelease(m_outView); SafeRelease(m_blitView); SafeRelease(m_out);
     m_w = m_h = 0; m_fmt = DXGI_FORMAT_UNKNOWN;
 }
 
 void Compose11::Shutdown() {
     DropCopy();
     SafeRelease(m_flowView); SafeRelease(m_flow);
-    SafeRelease(m_shader); SafeRelease(m_constants); SafeRelease(m_sampler); SafeRelease(m_dev);
+    SafeRelease(m_blitVs); SafeRelease(m_blitPs); SafeRelease(m_shader); SafeRelease(m_constants); SafeRelease(m_sampler); SafeRelease(m_dev);
 }
 
 // The copy of the buffer the pass reads, for this size and format (and m_out, made by TargetView when a buffer cannot be written directly).
@@ -335,11 +346,63 @@ ID3D11UnorderedAccessView* Compose11::TargetView(ID3D11Texture2D* target, DXGI_F
     if (!m_out) {
         desc.MipLevels = 1; desc.ArraySize = 1; desc.SampleDesc.Count = 1; desc.Usage = D3D11_USAGE_DEFAULT; desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
         desc.CPUAccessFlags = 0; desc.MiscFlags = 0;
+        // BGRA swapchains do not guarantee typed UAV stores. Compose in RGBA,
+        // then render to BGRA; CopyResource cannot convert channel layouts.
+        const bool bgra = view == DXGI_FORMAT_B8G8R8A8_UNORM;
+        if (bgra) { desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; uav.Format = desc.Format; desc.BindFlags |= D3D11_BIND_SHADER_RESOURCE; }
         if (FAILED(m_dev->CreateTexture2D(&desc, nullptr, &m_out)) || FAILED(m_dev->CreateUnorderedAccessView(m_out, &uav, &m_outView))) {
             Log("Compose11: the result texture could not be made"); SafeRelease(m_out); return nullptr;
         }
     }
+    if (view == DXGI_FORMAT_B8G8R8A8_UNORM && !m_blitView &&
+        FAILED(m_dev->CreateShaderResourceView(m_out, nullptr, &m_blitView))) return nullptr;
     return m_outView;
+}
+
+bool Compose11::Blit(ID3D11DeviceContext* ctx, ID3D11Texture2D* target) {
+    using Microsoft::WRL::ComPtr;
+    if (!m_blitVs || !m_blitPs) {
+        const char* hlsl = R"(
+Texture2D<float4> image : register(t0);
+float4 VS(uint id:SV_VertexID):SV_Position {
+    return float4(id==2 ? 3 : -1, id==1 ? 3 : -1, 0, 1);
+}
+float4 PS(float4 pos:SV_Position):SV_Target { return image.Load(int3(pos.xy,0)); }
+)";
+        ComPtr<ID3DBlob> vs, ps;
+        if (FAILED(D3DCompile(hlsl, strlen(hlsl), "echo-blit", nullptr,nullptr,"VS","vs_5_0",0,0,&vs,nullptr)) ||
+            FAILED(D3DCompile(hlsl, strlen(hlsl), "echo-blit", nullptr,nullptr,"PS","ps_5_0",0,0,&ps,nullptr))) return false;
+        SafeRelease(m_blitVs); SafeRelease(m_blitPs);
+        if (FAILED(m_dev->CreateVertexShader(vs->GetBufferPointer(),vs->GetBufferSize(),nullptr,&m_blitVs)) ||
+            FAILED(m_dev->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&m_blitPs))) return false;
+    }
+    ComPtr<ID3D11RenderTargetView> rtv;
+    D3D11_RENDER_TARGET_VIEW_DESC rd{}; rd.Format=DXGI_FORMAT_B8G8R8A8_UNORM; rd.ViewDimension=D3D11_RTV_DIMENSION_TEXTURE2D;
+    if (FAILED(m_dev->CreateRenderTargetView(target,&rd,&rtv))) return false;
+    ComPtr<ID3D11VertexShader> vs; ComPtr<ID3D11PixelShader> ps; ComPtr<ID3D11GeometryShader> gs;
+    ComPtr<ID3D11InputLayout> layout; ComPtr<ID3D11RasterizerState> raster;
+    ComPtr<ID3D11BlendState> blend; ComPtr<ID3D11DepthStencilState> depth;
+    ComPtr<ID3D11ShaderResourceView> srv; ComPtr<ID3D11DepthStencilView> dsv;
+    ID3D11RenderTargetView* oldTargets[8]{};
+    D3D11_PRIMITIVE_TOPOLOGY topology; D3D11_VIEWPORT vp[16]{}; UINT nvp=16, mask=0, stencil=0; FLOAT factor[4]{};
+    ctx->VSGetShader(&vs,nullptr,nullptr); ctx->PSGetShader(&ps,nullptr,nullptr); ctx->GSGetShader(&gs,nullptr,nullptr);
+    ctx->IAGetInputLayout(&layout); ctx->IAGetPrimitiveTopology(&topology); ctx->RSGetState(&raster); ctx->RSGetViewports(&nvp,vp);
+    ctx->OMGetBlendState(&blend,factor,&mask); ctx->OMGetDepthStencilState(&depth,&stencil);
+    ctx->OMGetRenderTargets(8,oldTargets,&dsv); ctx->PSGetShaderResources(0,1,&srv);
+    D3D11_VIEWPORT view{}; view.Width=static_cast<float>(m_w); view.Height=static_cast<float>(m_h); view.MaxDepth=1;
+    ctx->RSSetViewports(1,&view); ctx->RSSetState(nullptr); ctx->IASetInputLayout(nullptr);
+    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx->VSSetShader(m_blitVs,nullptr,0); ctx->PSSetShader(m_blitPs,nullptr,0); ctx->GSSetShader(nullptr,nullptr,0);
+    ID3D11RenderTargetView* out=rtv.Get(); ctx->OMSetRenderTargets(1,&out,nullptr);
+    ctx->OMSetBlendState(nullptr,nullptr,~0u); ctx->OMSetDepthStencilState(nullptr,0);
+    ctx->PSSetShaderResources(0,1,&m_blitView); ctx->Draw(3,0);
+    ID3D11ShaderResourceView* empty=nullptr; ctx->PSSetShaderResources(0,1,&empty);
+    ctx->OMSetRenderTargets(8,oldTargets,dsv.Get()); for (auto* t:oldTargets) if(t) t->Release();
+    ID3D11ShaderResourceView* old=srv.Get(); ctx->PSSetShaderResources(0,1,&old);
+    ctx->VSSetShader(vs.Get(),nullptr,0); ctx->PSSetShader(ps.Get(),nullptr,0); ctx->GSSetShader(gs.Get(),nullptr,0);
+    ctx->IASetInputLayout(layout.Get()); ctx->IASetPrimitiveTopology(topology); ctx->RSSetState(raster.Get()); ctx->RSSetViewports(nvp,vp);
+    ctx->OMSetBlendState(blend.Get(),factor,mask); ctx->OMSetDepthStencilState(depth.Get(),stencil);
+    return true;
 }
 
 ID3D11ShaderResourceView* Compose11::FlowView(ID3D11Resource* flow) {
@@ -356,7 +419,7 @@ bool Compose11::Run(ID3D11DeviceContext* ctx, const Args& a) {
     if (!m_shader || !ctx || !a.target || !a.delta) return false;
     LARGE_INTEGER freq, start; QueryPerformanceFrequency(&freq); QueryPerformanceCounter(&start);
     D3D11_TEXTURE2D_DESC desc; a.target->GetDesc(&desc);
-    const DXGI_FORMAT view = Bridge::ViewFormat(desc.Format);
+    const DXGI_FORMAT view = EchoViewFormat(desc.Format);
     if (view == DXGI_FORMAT_UNKNOWN || desc.SampleDesc.Count != 1) {   // 8-bit, 10-bit and half-float buffers work: the pass changes their SDR view
         const uint64_t key = 0xC000000000000000ull | (uint32_t)desc.Format;
         if (key != m_lastFailure) { m_lastFailure = key; Log("Compose11: presented frames of format %d (or multisampled) cannot be composed", (int)desc.Format); }
@@ -398,7 +461,9 @@ bool Compose11::Run(ID3D11DeviceContext* ctx, const Args& a) {
         ctx->CSSetShaderResources(0, 4, noSrvs);
         ctx->CSSetUnorderedAccessViews(0, 1, &noUav, nullptr);
     }
-    if (inPlace) out->Release(); else ctx->CopyResource(a.target, m_out);
+    if (inPlace) out->Release();
+    else if (m_blitView) { if (!Blit(ctx,a.target)) return false; }
+    else ctx->CopyResource(a.target, m_out);
 
     ++m_runs;
     LARGE_INTEGER end; QueryPerformanceCounter(&end);

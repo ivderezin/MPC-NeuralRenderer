@@ -73,6 +73,7 @@ private:
 	int m_pipelineRotation = 0;
 	CDrawStats m_outputStats; // every successful Present, real and generated
 	framegen::DisplayCadence m_displayCadence; // DXGI displayed-image statistics, when available
+	framegen::EchoPresentationClock m_echoPresentationClock;
 	struct {
 		unsigned generated = 0, real = 0, skipped = 0, stops = 0;
 	} m_mfgCounters;

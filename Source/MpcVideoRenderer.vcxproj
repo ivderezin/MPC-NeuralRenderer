@@ -165,6 +165,13 @@
     <ClInclude Include="FrameGeneration\EchoFrameGeneration.h" />
     <ClCompile Include="NeuralRendering\EchoNr.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClInclude Include="NeuralRendering\EchoNr.h" />
+    <ClCompile Include="FrameGeneration\EchoGuard.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild></ClCompile>
+    <ClCompile Include="EchoStorm\addon\auto_quality.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader><ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild></ClCompile>
+    <ClInclude Include="FrameGeneration\EchoGuard.h" />
+    <ClInclude Include="FrameGeneration\EchoGuardShaders.h" />
+    <ClInclude Include="FrameGeneration\ExactInputRepeat.h" />
+    <ClInclude Include="FrameGeneration\EchoPresentationClock.h" />
+    <ClInclude Include="EchoStorm\addon\auto_quality.h" />
     <ClInclude Include="NeuralRendering\NeuralPass.h" />
     <ClInclude Include="NeuralRendering\NeuralSettings.h" />
     <ClInclude Include="NeuralRendering\FrameHistory.h" />

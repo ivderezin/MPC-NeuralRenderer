@@ -3,6 +3,7 @@
 #include "GenerationStage.h"
 #include "DlssMultiFrameGeneration.h"
 #include "EchoFrameGeneration.h"
+#include "EchoGuard.h"
 #include "../Processing/FsrApi.h"
 #include <ffx/framegeneration/include/ffx_framegeneration.h>
 namespace framegen {
@@ -10,6 +11,7 @@ struct GenerationStage::Impl {
     processing::FrameGenerator provider = processing::FrameGenerator::Dlss;
     DlssMultiFrameGeneration dlss;
     EchoFrameGeneration echo;
+    EchoGuard guard;
     processing::FsrApi fsr;
     ffxContext context = nullptr;
     unsigned width = 0, height = 0, outputWidth = 0, outputHeight = 0;
@@ -41,11 +43,13 @@ void GenerationStage::Create(processing::FrameGenerator provider, ID3D12Device* 
         return;
     }
     if (provider == processing::FrameGenerator::Dlss) {
+        p.guard.Create(device,outWidth,outHeight,hdr);
         p.dlss.Create(device, list, width, height, outWidth, outHeight, hdr);
         return;
     }
     if (provider != processing::FrameGenerator::Fsr)
         throw std::runtime_error("XeSS FG uses its proxy presentation backend");
+    p.guard.Create(device,outWidth,outHeight,hdr);
     p.fsr.Load(directory / L"amd_fidelityfx_framegeneration_dx12.dll");
     ffxCreateContextDescFrameGeneration create{};
     create.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION;
@@ -81,6 +85,7 @@ void GenerationStage::Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* 
     }
     if (p.provider == processing::FrameGenerator::Dlss) {
         ngx::Check(p.dlss.Evaluate(list, color, depth, motion, output, count, reset), "Dispatch DLSS MFG");
+        p.guard.Dispatch(list,color,motion,output,count,reset);
         return;
     }
     ++p.frameId;
@@ -120,6 +125,7 @@ void GenerationStage::Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* 
     generate.backbufferTransferFunction = p.hdr ? FFX_API_BACKBUFFER_TRANSFER_FUNCTION_PQ : FFX_API_BACKBUFFER_TRANSFER_FUNCTION_SRGB;
     generate.minMaxLuminance[1] = p.hdr ? 10000.0f : 80.0f;
     processing::FsrApi::Check(p.fsr.dispatch(&p.context, &generate.header), "Dispatch FSR frame generation");
+    p.guard.Dispatch(list,color,motion,output,1,reset);
 }
 unsigned GenerationStage::Collect() {
     if (impl_->provider == processing::FrameGenerator::EchoStorm) return impl_->echo.Collect();

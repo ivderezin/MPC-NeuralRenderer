@@ -7,6 +7,7 @@
 #include "MotionEstimator.h"
 #include "MotionRepair.h"
 #include "../FrameGeneration/FrameContentProbe.h"
+#include "../FrameGeneration/ExactInputRepeat.h"
 #include "../Upscaling/UpscaleStage.h"
 #include "../FrameGeneration/GenerationStage.h"
 #include "../FrameGeneration/GenerationPolicy.h"
@@ -235,6 +236,10 @@ struct NeuralPass::Impl {
     SharedTexture repairedVectors, upscaleDistrust;
     FrameHistory history;
     framegen::FrameContentProbe contentProbe;
+    framegen::ExactInputRepeat repeatGate;
+    unsigned long long repeatedInputs=0;
+    long long lastDistinctTimestamp=0;
+    bool haveDistinctTimestamp=false;
     bool diagnosticsEnabled = false, diagnosticsFailed = false;
     Settings options;
     upscaling::Extent target{}, monitor{};
@@ -315,6 +320,7 @@ struct NeuralPass::Impl {
     }
     void Invalidate() {
         contentProbe.Invalidate();
+        repeatGate.Invalidate(); haveDistinctTimestamp=false;
         history.Clear();
         asyncOutput.Invalidate();
         lastCompletion = {};
@@ -392,6 +398,7 @@ struct NeuralPass::Impl {
             message << std::fixed << std::setprecision(1) << L"\nProcessing: " << completedFps << L" fps, GPU "
                     << gpuMilliseconds << L" ms, prepare " << preparationMilliseconds << L" ms (async), init "
                     << initMilliseconds << L" ms";
+        if (options.echoPipeline) message << L"\nExact repeated input batches suppressed: " << repeatedInputs;
         if (diagnosticsEnabled && contentProbe.metrics.samples) {
             const auto& data=contentProbe.metrics;
             message << std::fixed << std::setprecision(3) << L"\nContent samples: raw delta " << data.delta[0]
@@ -775,6 +782,11 @@ struct NeuralPass::Impl {
         if (asyncOutput.Collect(completed)) {
             // Already completed: acquire the shared resource without waiting for inference.
             Check(context11->Wait(fence11.Get(), submitted), "Acquire completed NR output");
+            const bool repeated=options.echoPipeline && repeatGate.Same(context11.Get());
+            if (repeated) {
+                if (pendingHasFG) frameGeneration.Collect();
+                ++repeatedInputs;
+            } else {
             ++serial;
             const auto slot = static_cast<size_t>(serial & 1);
             DisplayCopy(displayReal[slot], pendingReal);
@@ -798,6 +810,8 @@ struct NeuralPass::Impl {
             outputTimestamp = pendingTimestamp;
             outputDuration = pendingDuration;
             ReadTiming();
+            lastDistinctTimestamp=pendingTimestamp;haveDistinctTimestamp=true;
+            }
         }
         if (action == FrameHistory::Action::Repeat)
             return asyncOutput.Available() ? published : nullptr;
@@ -812,8 +826,8 @@ struct NeuralPass::Impl {
             }
         }
         const float frameTimeMs =
-            !reset && timestamp > lastInputTimestamp
-                ? std::clamp(static_cast<float>(timestamp - lastInputTimestamp) / 10000.0f, 1.0f, 500.0f)
+            !reset && timestamp > (options.echoPipeline && haveDistinctTimestamp ? lastDistinctTimestamp : lastInputTimestamp)
+                ? std::clamp(static_cast<float>(timestamp - (options.echoPipeline && haveDistinctTimestamp ? lastDistinctTimestamp : lastInputTimestamp)) / 10000.0f, 1.0f, 500.0f)
                 : defaultFrameTimeMs;
         pendingDuration = static_cast<long long>(frameTimeMs * 10000.0f);
         pendingTimestamp = timestamp;
@@ -824,6 +838,7 @@ struct NeuralPass::Impl {
         context11->Begin(preparationClock.Get());
         context11->End(preparationStart.Get());
         context11->CopyResource(source.Get(), frame);
+        if (options.echoPipeline) repeatGate.Record(context11.Get(),source.Get(),sourceView.Get(),rect,reset);
         context11->UpdateSubresource(constants.Get(), 0, nullptr, data, 0, 0);
         ID3D11Buffer* cb[] = {constants.Get()};
         context11->CSSetConstantBuffers(0, 1, cb);

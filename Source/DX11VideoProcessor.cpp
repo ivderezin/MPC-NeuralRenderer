@@ -807,6 +807,7 @@ void CDX11VideoProcessor::ReleaseDevice()
 void CDX11VideoProcessor::ReleaseSwapChain()
 {
 	m_displayCadence.Reset();
+	m_echoPresentationClock.Reset();
 	StopMfgPresentation();
 	if (m_pDXGISwapChain1 && !m_xessPresenter.Active()) {
 		m_pDXGISwapChain1->SetFullscreenState(FALSE, nullptr);
@@ -3125,14 +3126,15 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 			m_mfgPlan.Clear(); m_mfgSerial = outputSerial;
 			LARGE_INTEGER now{}, frequency{};
 			QueryPerformanceCounter(&now); QueryPerformanceFrequency(&frequency);
-			const auto duration = static_cast<long long>(static_cast<double>(m_neuralPass.OutputDuration()) * frequency.QuadPart / 10000000.0);
+			auto duration = static_cast<long long>(static_cast<double>(m_neuralPass.OutputDuration()) * frequency.QuadPart / 10000000.0);
+			if (m_processingSettings.echoPipeline) duration=m_echoPresentationClock.SmoothDuration(duration,static_cast<double>(frequency.QuadPart));
 			if (m_processingSettings.presentThread) {
 				bool queued;
 				{
 					std::lock_guard lock(m_mfgQueueLock);
 					queued = m_mfgQueue.Add(now.QuadPart, duration, generatedCount, m_neuralRefreshHz,
 							static_cast<double>(frequency.QuadPart), outputSerial, &m_mfgCounters.skipped,
-							m_processingSettings.limitGenerationToDisplay);
+							m_processingSettings.limitGenerationToDisplay,m_processingSettings.echoPipeline ? &m_echoPresentationClock : nullptr);
 					if (!queued) m_mfgQueue.Clear();
 				}
 				m_mfgActive = queued;
@@ -3146,7 +3148,7 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 				}
 			} else {
 				m_mfgPlan.Start(now.QuadPart,duration,generatedCount,m_neuralRefreshHz,static_cast<double>(frequency.QuadPart),
-					m_processingSettings.limitGenerationToDisplay);
+					m_processingSettings.limitGenerationToDisplay,m_processingSettings.echoPipeline ? &m_echoPresentationClock : nullptr);
 				m_mfgActive = m_mfgPlan.Pending()
 					&& GetPropW(m_pFilter->m_hWndParentMain,L"MPCNeuralRenderer.This") == m_pFilter;
 				if (m_mfgActive) {
@@ -3265,12 +3267,13 @@ HRESULT CDX11VideoProcessor::PresentFrame(unsigned syncInterval, bool running)
 	}
 	if (hr == S_OK) {
 		m_outputStats.Add(GetPreciseTick());
-		if (m_bShowStats && !m_xessPresenter.Active()) {
+		if ((m_bShowStats || m_processingSettings.echoPipeline) && !m_xessPresenter.Active()) {
 			DXGI_FRAME_STATISTICS stats{};
 			if (m_pDXGISwapChain1->GetFrameStatistics(&stats) == S_OK) {
 				LARGE_INTEGER frequency{};
 				QueryPerformanceFrequency(&frequency);
 				m_displayCadence.Observe(stats.PresentCount, stats.SyncQPCTime.QuadPart, frequency.QuadPart);
+				m_echoPresentationClock.Observe(stats.SyncRefreshCount,stats.SyncQPCTime.QuadPart,static_cast<double>(frequency.QuadPart));
 			} else m_displayCadence.Reset();
 		}
 	}

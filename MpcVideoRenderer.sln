@@ -28,6 +28,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "BaseClasses", "external\Bas
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "minhook", "external\minhook.vcxproj", "{303B855A-137D-45E9-AF6D-B7241C6E66D6}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "EchoNrForwarder", "Source\EchoStorm\forwarder\EchoNrForwarder.vcxproj", "{E682D675-51B8-4964-895A-749A9F77E30D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -36,6 +38,12 @@ Global
 		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E682D675-51B8-4964-895A-749A9F77E30D}.Debug|x64.ActiveCfg = Debug|x64
+		{E682D675-51B8-4964-895A-749A9F77E30D}.Debug|x64.Build.0 = Debug|x64
+		{E682D675-51B8-4964-895A-749A9F77E30D}.Debug|x86.ActiveCfg = Debug|x64
+		{E682D675-51B8-4964-895A-749A9F77E30D}.Release|x64.ActiveCfg = Release|x64
+		{E682D675-51B8-4964-895A-749A9F77E30D}.Release|x64.Build.0 = Release|x64
+		{E682D675-51B8-4964-895A-749A9F77E30D}.Release|x86.ActiveCfg = Release|x64
 		{C9CEECB2-947C-4902-BEF9-B98DCAF14B1C}.Debug|x64.ActiveCfg = Debug|x64
 		{C9CEECB2-947C-4902-BEF9-B98DCAF14B1C}.Debug|x64.Build.0 = Debug|x64
 		{C9CEECB2-947C-4902-BEF9-B98DCAF14B1C}.Debug|x86.ActiveCfg = Debug|Win32

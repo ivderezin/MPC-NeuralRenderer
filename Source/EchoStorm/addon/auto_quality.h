@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: MIT
+// Echo-Storm/ls-addon-manager at 8d3eac351d42480326290b0f8965127a630b44f2.
+// Copyright (c) 2026 Echo-Storm and andreiday. See ../EchoStorm-LICENSE.txt.
+// Auto quality: keeps the model within a time budget by lowering its working scale (the "Model resolution") when it runs over, and raising it
+// again toward the person's own setting when there is room. The person's setting is the ceiling, a floor they choose is the lowest it goes, and
+// nothing that changes the look is touched.
+//
+// Every change of the working scale has the model's feature made again (in the background, but the model pauses for a fraction of a second
+// meanwhile, and its own history starts afresh, which shows), so it changes rarely and in as few steps as it can:
+//   * it goes straight to the scale where the model's time is expected to fit (the time grows with the area, so from 13 ms at 1.0 with a 3 ms
+//     budget it goes to about 0.47 at once, not through nine steps), then corrects once from the time it measures there;
+//   * down after 3 s over the budget (and at least 5 s after the last change), up after 10 s well under it (and 20 s after the last change),
+//     and only up to a scale where the time it expects still fits;
+//   * it can start from the scale it settled at last time (Seed), so a session does not begin with a ramp down from the person's setting;
+//   * when the game's own frames get slow (the frame time well over the best it has lately managed: the graphics card is out of room for
+//     everything), the budget shrinks in proportion, and it does not go back up for a minute after that.
+//   * with a limit on the card's load ("Keep the graphics card under N %"), a card over it for 3 s is pressure of its own, as if the game's frames were slow: the budget
+//     shrinks, it does not go back up for a minute, and at the floor the model runs less often. It lets go after the load has been 8 points under the limit for 10 s.
+//   * at its floor, with the game's frames still slow, the model runs on every 2nd or 3rd frame instead (RunEvery; the presents keep warping the last result, as they
+//     already do while the model is busy): the model's own spikes are the last thing it can take off the card. It goes back to every frame after the game has been calm for
+//     10 s, and not before 30 s after the last increase.
+// Frames slower than 100 ms (a loading screen, a pause) are not judged.
+#pragma once
+#include <cstdint>
+#include <deque>
+
+namespace nr {
+
+class AutoQuality {
+public:
+    // gpuLimit: the percent of the card's load to keep under (0 = not asked for); the load itself is the last argument of Update (0 = not known)
+    struct Settings { bool on = false; float budgetMs = 5.0f; float floor = 0.25f; float gpuLimit = 0.0f; };
+    struct Step { uint64_t atMs; float from, to, modelMs; };
+
+    // At every model run: the time now, the model's last time, the time between frames and the person's working scale. True when the scale
+    // it wants changed (Scale() and the newest Step say to what, and why).
+    bool Update(uint64_t nowMs, float modelMs, float frameIntervalMs, float ceiling, const Settings& s, unsigned gpuPercent = 0);
+    // The working scale to run the model at: the person's own when auto is off.
+    float Scale() const { return m_scale; }
+    float AverageMs() const { return m_avgMs; }
+    // The scale to start from instead of the person's own (their setting stays the ceiling); only before the first Update.
+    void Seed(float scale) { if (m_scale <= 0 && scale > 0) m_scale = scale; }
+    // The scale, if it has been held for at least holdMs with the model within budget (else 0): worth keeping for the next session.
+    float StableScale(uint64_t nowMs, uint64_t holdMs) const { return m_scale > 0 && m_settled && m_lastChange + holdMs <= nowMs ? m_scale : 0.0f; }
+    // Run the model on every Nth frame (1 normally; 2 or 3 at the floor while the game's frames are slow).
+    int RunEvery() const { return m_every; }
+    // The share of the budget left by frame pressure (1: none).
+    float Pressure() const { return m_pressure; }
+    // The card has been over the limit asked for (and not yet back well under it): it counts as pressure of its own.
+    bool GpuOver() const { return m_gpuOver; }
+    const std::deque<Step>& History() const { return m_history; }
+
+private:
+    bool Change(uint64_t nowMs, float to);
+    float ScaleFor(float targetMs) const;
+    float m_prevScale = 0, m_prevMs = 0;   // the measurement at the scale before the last change
+    float m_scale = 0;           // 0 until the first update
+    float m_avgMs = 0;
+    float m_frameAvg = 0, m_frameBase = 0, m_pressure = 1.0f;   // the game's frame time: now, and the best it has lately managed
+    bool m_gpuOver = false; uint64_t m_gpuHotSince = 0, m_gpuCoolSince = 0;   // the card's load against the limit: over it for 3 s, back under it by 8 points for 10 s
+    bool m_settled = false;                                       // the model fits the budget at the current scale
+    uint64_t m_overSince = 0, m_underSince = 0, m_lastChange = 0, m_noRaiseUntil = 0;
+    uint64_t m_resumedAt = 0, m_holdMs = 30000;   // when the model went back to every frame, and how long it stays at every 2nd or 3rd after the next increase (grows if going back did not hold)
+    int m_every = 1; uint64_t m_heavySince = 0, m_calmSince = 0, m_everyChangedAt = 0, m_everyHoldUntil = 0;
+    std::deque<Step> m_history;  // the newest last, at most 8
+};
+
+} // namespace nr
