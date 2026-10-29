@@ -453,7 +453,7 @@ XessPresenter::~XessPresenter() = default;
 void XessPresenter::Reset() {}
 void XessPresenter::ClearHistory() {}
 HRESULT XessPresenter::Create(ID3D11Device*, ID3D11DeviceContext*, IDXGIFactory2*, HWND, DXGI_SWAP_CHAIN_DESC1,
-                              unsigned, double, float, const std::filesystem::path&, IDXGISwapChain1**, bool) {
+                              unsigned, double, float, const std::filesystem::path&, IDXGISwapChain1**, bool, bool) {
     return E_NOTIMPL;
 }
 HRESULT XessPresenter::BackBuffer(ID3D11Texture2D**) const {
