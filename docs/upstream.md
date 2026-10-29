@@ -1,5 +1,7 @@
 # Source provenance
 
+For the precise scope of the EchoStorm adaptation and the unported components, see [the implementation comparison](echo-storm-comparison.md). The imported motion estimator, motion repair and SR lean pass do not include EchoStorm's `OwnSynth` generator, its post-FSR-FG guard, the main NR delta-composition pipeline, or an enabled full-frame repeat gate. In particular, applying FlowFix to every vendor FG provider is an adaptation specific to this renderer, not the routing used by upstream's FSR FG path.
+
 - MPC Video Renderer: https://github.com/Aleksoid1978/VideoRenderer, revision `369af64d001b540f4f7e634fd46189b93ffb4b7d`, GPL-3.0 (see LICENSE.txt; original file notices retained).
 - BaseClasses: https://github.com/v0lt/BaseClasses, revision `de6f4a9971efcd4f53b2ef94552914c5af25c638`, vendored under external/BaseClasses; original notices retained.
 - MinHook: https://github.com/TsudaKageyu/minhook, revision `c3fcafdc10146beb5919319d0683e44e3c30d537`, vendored under external/minhook; see its LICENSE.txt.
