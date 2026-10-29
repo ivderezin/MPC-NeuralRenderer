@@ -48,7 +48,7 @@ float Half(unsigned bits) {
 }
 void WriteFile(const std::filesystem::path& path,const void* data,size_t bytes) {
     std::ofstream file(path,std::ios::binary);file.exceptions(std::ios::badbit|std::ios::failbit);
-    file.write(static_cast<const char*>(data),static_cast<std::streamsize>(bytes));
+    file.write(static_cast<const char*>(data),static_cast<std::streamsize>(bytes));file.close();
 }
 void Png(IWICImagingFactory* factory,const std::filesystem::path& path,UINT width,UINT height,const std::vector<unsigned char>& bgr) {
     ComPtr<IWICStream> stream;ComPtr<IWICBitmapEncoder> encoder;ComPtr<IWICBitmapFrameEncode> frame;

@@ -80,10 +80,11 @@ NVSDK_NGX_Result DlssMultiFrameGeneration::Evaluate(ID3D12GraphicsCommandList* l
     options.backbufferSubrectSize = options.outputInterpSubrectSize = {outputWidth_,outputHeight_};
     if(capture_.Before(list,color,depth,motion,frameId_,reset,runtimeStatus_)) {
         try {
-            std::ostringstream text;
+            std::ostringstream text;text.precision(std::numeric_limits<float>::max_digits10);
             text<<"input_size="<<inputWidth_<<'x'<<inputHeight_<<"\noutput_size="<<outputWidth_<<'x'<<outputHeight_
                 <<"\nmvec_scale="<<options.mvecScale[0]<<','<<options.mvecScale[1]<<"\nreset="<<reset
                 <<"\ndepth_inverted="<<options.depthInverted<<"\northo="<<options.orthoProjection<<"\ncamera_motion_included="<<options.cameraMotionIncluded
+                <<"\nmvec_dilated="<<options.motionVectorsDilated<<"\nmvec_invalid="<<options.motionVectorsInvalidValue<<"\nnot_rendering_game_frames="<<options.notRenderingGameFrames
                 <<"\nnear="<<options.cameraNear<<"\nfar="<<options.cameraFar<<"\nfov="<<options.cameraFOV<<"\nhdr="<<hdr_<<'\n';
             auto matrix=[&](const char* name,const float (&m)[4][4]) {
                 text<<name<<'=';for(const auto& row:m)for(float value:row)text<<value<<',';text<<'\n';

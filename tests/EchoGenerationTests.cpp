@@ -127,9 +127,9 @@ void TestSampleCapture(Gpu12& gpu) {
     Require(ReadPng(directory/"previous.png",w,h)==b,"Previous SDK input must survive lossless capture");
     Require(ReadPng(directory/"current.png",w,h)==a,"Current SDK input RGB order must survive capture");
     Require(ReadPng(directory/"generated_1.png",w,h)==b,"Captured SDK output must be byte-exact in RGB");
-    std::ifstream raw(directory/"motion.raw",std::ios::binary);std::vector<char> rawBytes((std::istreambuf_iterator<char>(raw)),{});
+    std::ifstream raw(directory/"motion.raw",std::ios::binary);std::vector<char> rawBytes((std::istreambuf_iterator<char>(raw)),{});raw.close();
     Require(rawBytes.size()==vectorBits.size()*4 && std::memcmp(rawBytes.data(),vectorBits.data(),rawBytes.size())==0,"Half-float motion must be saved exactly without row padding");
-    std::ifstream manifestFile(directory/"manifest.txt");std::string manifest((std::istreambuf_iterator<char>(manifestFile)),{});
+    std::ifstream manifestFile(directory/"manifest.txt");std::string manifest((std::istreambuf_iterator<char>(manifestFile)),{});manifestFile.close();
     Require(manifest.find("previous_frame_id=9")!=std::string::npos && manifest.find("current_frame_id=10")!=std::string::npos,"Capture manifest must identify the actual consecutive pair");
     Require(gpu.Read(made.Get())==b,"Diagnostic readback must not change generated pixels");
     std::filesystem::remove_all(directory);
