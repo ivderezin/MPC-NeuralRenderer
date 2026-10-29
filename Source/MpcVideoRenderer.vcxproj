@@ -237,14 +237,10 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\external\BaseClasses.vcxproj">
-      <Project>{e8a3f6fa-ae1c-4c8e-a0b6-9c8480324eaa}  <ItemGroup><ClInclude Include="FrameGeneration\DlssCaptureCamera.h" /></ItemGroup>
-  <ItemGroup><ClInclude Include="Processing\LoadedModules.h" /></ItemGroup>
-</Project>
+      <Project>{e8a3f6fa-ae1c-4c8e-a0b6-9c8480324eaa}</Project>
     </ProjectReference>
     <ProjectReference Include="..\external\minhook.vcxproj">
-      <Project>{303b855a-137d-45e9-af6d-b7241c6e66d6}  <ItemGroup><ClInclude Include="FrameGeneration\DlssCaptureCamera.h" /></ItemGroup>
-  <ItemGroup><ClInclude Include="Processing\LoadedModules.h" /></ItemGroup>
-</Project>
+      <Project>{303b855a-137d-45e9-af6d-b7241c6e66d6}</Project>
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
@@ -256,9 +252,7 @@
   </ItemGroup>
   <ItemGroup Condition="'$(Platform)'=='x64'">
     <ProjectReference Include="EchoStorm\forwarder\EchoNrForwarder.vcxproj">
-      <Project>{E682D675-51B8-4964-895A-749A9F77E30D}  <ItemGroup><ClInclude Include="FrameGeneration\DlssCaptureCamera.h" /></ItemGroup>
-  <ItemGroup><ClInclude Include="Processing\LoadedModules.h" /></ItemGroup>
-</Project>
+      <Project>{E682D675-51B8-4964-895A-749A9F77E30D}</Project>
       <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
   </ItemGroup>
