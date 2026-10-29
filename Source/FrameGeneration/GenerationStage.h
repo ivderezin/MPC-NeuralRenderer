@@ -21,5 +21,6 @@ class GenerationStage {
     void Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motion,
                   const std::array<ID3D12Resource*, 3>& output, unsigned count, bool reset, float frameTimeMs);
     unsigned Collect();
+    std::wstring RuntimeStatus() const;
 };
 }

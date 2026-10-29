@@ -4,6 +4,9 @@
 #include <nvsdk_ngx_helpers_dlssg_d3d.h>
 #include <algorithm>
 #include <limits>
+#include <cstring>
+#include "DlssCaptureCamera.h"
+#include "../Processing/LoadedModules.h"
 namespace framegen {
 namespace {
 Microsoft::WRL::ComPtr<ID3D12Resource> Buffer(ID3D12Device* device, D3D12_HEAP_TYPE type, unsigned size, D3D12_RESOURCE_STATES state, D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE) {
@@ -37,6 +40,7 @@ void DlssMultiFrameGeneration::Create(ID3D12Device* device, ID3D12GraphicsComman
     create.NativeBackbufferFormat = hdr ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
     ngx::Check(NGX_D3D12_CREATE_DLSSG(list, 1, 1, &handle_, params_, &create), "Create DLSS MFG");
     if (!handle_) throw std::runtime_error("DLSS MFG returned no handle");
+    runtimeStatus_=processing::LoadedDlssgStatus();
     maximum = maxGenerated_;
     if (params_->Get(NVSDK_NGX_DLSSG_Parameter_MultiFrameCountMax, &maximum) == NVSDK_NGX_Result_Success)
         maxGenerated_ = std::clamp(maximum, 1u, 3u);
@@ -59,15 +63,18 @@ NVSDK_NGX_Result DlssMultiFrameGeneration::Evaluate(ID3D12GraphicsCommandList* l
     options.colorBuffersHDR = hdr_;
     options.mvecScale[0] = 1.0f / inputWidth_; options.mvecScale[1] = 1.0f / inputHeight_;
     options.cameraUp[1] = options.cameraRight[0] = options.cameraFwd[2] = 1;
-    options.cameraNear = 0.1f; options.cameraFar = 1000; options.cameraFOV = 1.04719755f;
+    options.cameraNear = DlssCaptureCamera::Near; options.cameraFar = DlssCaptureCamera::Far; options.cameraFOV = 1.04719755f;
     options.cameraAspectRatio = static_cast<float>(outputWidth_) / outputHeight_;
     options.depthInverted = true; options.cameraMotionIncluded = true;
     options.orthoProjection = true; options.reset = reset;
     options.motionVectorsInvalidValue = (std::numeric_limits<float>::max)();
     for (unsigned i=0;i<4;++i) {
-        options.cameraViewToClip[i][i] = options.clipToCameraView[i][i] = options.clipToLensClip[i][i] = 1;
+        options.clipToLensClip[i][i] = 1;
         options.clipToPrevClip[i][i] = options.prevClipToClip[i][i] = 1;
     }
+    const DlssCaptureCamera camera(options.cameraAspectRatio);
+    std::memcpy(options.cameraViewToClip,camera.viewToClip.data(),sizeof(options.cameraViewToClip));
+    std::memcpy(options.clipToCameraView,camera.clipToView.data(),sizeof(options.clipToCameraView));
     options.mvecsSubrectSize = options.depthSubrectSize = {inputWidth_,inputHeight_};
     options.backbufferSubrectSize = options.outputInterpSubrectSize = {outputWidth_,outputHeight_};
     for (unsigned i=0;i<count;++i) {
@@ -85,6 +92,7 @@ NVSDK_NGX_Result DlssMultiFrameGeneration::Evaluate(ID3D12GraphicsCommandList* l
         list->CopyBufferRegion(readback_.Get(),i*4,disabled_[i].Get(),0,4);
         ngx::Transition(list,disabled_[i].Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
+    if (frameId_==1) runtimeStatus_=processing::LoadedDlssgStatus();
     return NVSDK_NGX_Result_Success;
 }
 unsigned DlssMultiFrameGeneration::Collect() {

@@ -10,6 +10,10 @@ cl /nologo /std:c++20 /EHsc /W4 /WX tests\FrameHistoryTests.cpp /Fo_bin\tests\Fr
 if errorlevel 1 exit /b 1
 _bin\tests\FrameHistoryTests.exe
 if errorlevel 1 exit /b 1
+cl /nologo /std:c++20 /EHsc /W4 /WX /DNOMINMAX tests\DlssCaptureTests.cpp /Fo_bin\tests\DlssCaptureTests.obj /Fe_bin\tests\DlssCaptureTests.exe
+if errorlevel 1 exit /b 1
+_bin\tests\DlssCaptureTests.exe
+if errorlevel 1 exit /b 1
 cl /nologo /std:c++20 /EHsc /W4 /WX tests\ProcessingPolicyTests.cpp /Fo_bin\tests\ProcessingPolicyTests.obj /Fe_bin\tests\ProcessingPolicyTests.exe
 if errorlevel 1 exit /b 1
 _bin\tests\ProcessingPolicyTests.exe

@@ -400,6 +400,8 @@ struct NeuralPass::Impl {
             message << std::fixed << std::setprecision(1) << L"\nProcessing: " << completedFps << L" fps, GPU "
                     << gpuMilliseconds << L" ms, prepare " << preparationMilliseconds << L" ms (async), init "
                     << initMilliseconds << L" ms";
+        if (options.frameGenerator==processing::FrameGenerator::Dlss && !frameGeneration.RuntimeStatus().empty())
+            message << L"\n" << frameGeneration.RuntimeStatus() << L"\nDLSS FG: finite flat-depth / orthographic capture fallback";
         if (options.echoPipeline) message << L"\nExact repeated input batches suppressed: " << repeatedInputs;
         if (diagnosticsEnabled && contentProbe.metrics.samples) {
             const auto& data=contentProbe.metrics;

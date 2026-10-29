@@ -347,4 +347,6 @@
   <ItemGroup><ClInclude Include="FrameGeneration\EchoGuardShaders.h" /></ItemGroup>
   <ItemGroup><ClInclude Include="FrameGeneration\EchoPresentationClock.h" /></ItemGroup>
   <ItemGroup><ClInclude Include="FrameGeneration\ExactInputRepeat.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="FrameGeneration\DlssCaptureCamera.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="Processing\LoadedModules.h" /></ItemGroup>
 </Project>
