@@ -116,7 +116,7 @@ int main() {
         double motionError=0;unsigned motionSamples=0;
         for(unsigned y=16;y<48;++y)for(unsigned x=32;x<88;++x) {
             const auto at=(y*w+x)*4;
-            motionError+=std::abs(half(vectors[at],vectors[at+1])+8.f)+std::abs(half(vectors[at+2],vectors[at+3]));
+            motionError+=std::abs(half(vectors[at],vectors[at+1])-8.f)+std::abs(half(vectors[at+2],vectors[at+3]));
             ++motionSamples;
         }
         Require(motionError/motionSamples<1,"Vendor FG guidance must use final-frame backward motion in final-resolution pixels");
