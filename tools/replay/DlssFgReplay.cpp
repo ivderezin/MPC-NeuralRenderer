@@ -189,7 +189,7 @@ void SelfTest(IWICImagingFactory* factory) {
         const unsigned short vx=0x4800;std::memcpy(vectors.data()+i*4,&vx,2);
     }
     Require(MidpointError(a,b,m,vectors)<.001,"Midpoint diagnostic failed for translated ramp");
-    std::fill(m.rgba.begin(),m.rgba.end(),0);
+    std::fill(m.rgba.begin(),m.rgba.end(),static_cast<unsigned char>(0));
     Require(MidpointError(a,b,m,vectors)>20,"Midpoint diagnostic missed corrupt output");
     std::cout<<"Replay image I/O and sampler self-test passed (NVIDIA not required)\n";
 }
