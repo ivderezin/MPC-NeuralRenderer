@@ -55,6 +55,8 @@
 
 ### Апскейл и генерация
 
+В прямом вызове NVIDIA DLSS FG исправлен масштаб пиксельных векторов: `1,1` вместо `1/ширина,1/высота`. На сохранённой паре 4K SDR с RTX 5080 и DLSS-G 310.9.16.0 это существенно уменьшило двоение при движении камеры; результат подтверждён отдельным replay, обычное воспроизведение после фикса ещё проверяется. Это не изменение соглашений Streamline, FSR, XeSS или SR. [Подробности диагностики](docs/dlss-fg-investigation.md).
+
 Для диагностики артефактов нажмите **Save DLSS FG sample** при работающем DLSS FG и видимом движении камеры. Сохраняются два последовательных входа SDK, векторы и глубина, параметры вызова, флаги отключения интерполяции и кадры NVIDIA до post-FG защиты. После готовности открывается папка `%TEMP%\MPC-NeuralRenderer\DLSS-FG-sample-*`; автоматической отправки файлов нет. Захват разовый, только по кнопке; PNG записываются в фоне после завершения GPU-пакета. Лимит readback-буферов — 256 МиБ; захват 4K всё равно требует заметной памяти и может кратковременно влиять на время обработки. Непрозрачный SDR сохраняется в PNG без потерь; raw-файлы сохраняют точные данные остальных форматов. HDR-превью показывают квантованный PQ без тонмаппинга.
 
 Для отдельного сравнения входных текстур и параметра подготовки векторов есть `DLSS-FG-Replay.exe`: он входит в полный и малый Actions-архив, работает с распакованным SDR-образцом и сохраняет результаты контрольных прогонов. [Инструкция](tools/replay/Replay-README.md). Это диагностический тест на NVIDIA GPU; проверка CI охватывает сборку и работу с изображениями, а не качество DLSS FG. Новые образцы также записывают выбранный источник векторов в `guidance_source`.
@@ -197,6 +199,8 @@ The project started from wanting to try neural rendering in Nintendo Switch 2 ga
 Select the upscaler and frame generator independently: for example, FSR + XeSS FG or XeSS + DLSS MFG. NR is also enabled separately. This is an additional DirectShow renderer: the stock MPC Video Renderer registration and output settings are preserved. To uninstall, close the player and run `Uninstall_MPCVR_64.cmd` as administrator.
 
 ### Upscaling and frame generation
+
+The direct NVIDIA DLSS FG call now uses unit scale (`1,1`) for pixel motion instead of `1/width,1/height`. The captured 4K SDR pair on RTX 5080 with DLSS-G 310.9.16.0 showed substantially reduced camera-pan doubling in standalone replay; live playback with the fix still needs confirmation. Streamline, FSR, XeSS and SR conventions are unchanged. [Investigation details](docs/dlss-fg-investigation.md).
 
 For a DLSS artifact report, press **Save DLSS FG sample** while DLSS FG is active and camera motion is visible. This saves one consecutive SDK frame pair, raw motion/depth, SDK options/disable flags and generated frames before the output guard. PNG writing runs in the background after the existing GPU completion fence. The folder opens when ready, under `%TEMP%\MPC-NeuralRenderer\DLSS-FG-sample-*`. Nothing is uploaded. Capture is explicit, one-shot and limited to 256 MiB of readback buffers; a 4K capture can still use substantial memory and briefly affect playback timing. Opaque SDR colours use lossless PNG; raw data preserves non-opaque colour, HDR, half-float motion and depth. HDR previews are quantized PQ, not tone-mapped.
 

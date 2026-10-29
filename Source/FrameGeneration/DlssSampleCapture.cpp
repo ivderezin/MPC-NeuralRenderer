@@ -126,7 +126,7 @@ struct DlssSampleCapture::Impl {
         std::filesystem::create_directories(directory);
         std::ostringstream manifest;
         manifest<<"DLSS FG diagnostic sample v1\nprevious_frame_id="<<previousId<<"\ncurrent_frame_id="<<currentId<<"\ngenerated_count="<<generated<<"\n"<<context<<"\n"<<Utf8(runtime)<<"\n";
-        manifest<<"motion_direction=current_to_previous; units=pixels before SDK normalization\nraw_layout=little_endian, tightly_packed, 4_bytes_per_pixel\nHDR previews are quantized PQ, not tone-mapped; use raw data for exact values.\n";
+        manifest<<"motion_direction=current_to_previous; units=motion_texture_pixels; SDK scaling is recorded in mvec_scale\nraw_layout=little_endian, tightly_packed, 4_bytes_per_pixel\nHDR previews are quantized PQ, not tone-mapped; use raw data for exact values.\n";
         for(unsigned i=0;i<generated;++i)manifest<<"generated_"<<i+1<<"_disable_flag="<<disabled[i]<<'\n';
         for(const auto& plane:planes) {
             manifest<<plane.name<<": width="<<plane.width<<", height="<<plane.height<<", dxgi_format="<<static_cast<unsigned>(plane.format)<<'\n';

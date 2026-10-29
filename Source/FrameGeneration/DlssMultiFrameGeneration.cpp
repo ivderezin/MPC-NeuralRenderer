@@ -63,7 +63,11 @@ NVSDK_NGX_Result DlssMultiFrameGeneration::Evaluate(ID3D12GraphicsCommandList* l
     options.multiFrameCount = count;
     options.colorBuffersHDR = hdr_;
     options.motionVectorsDilated = motionVectorsDilated_;
-    options.mvecScale[0] = 1.0f / inputWidth_; options.mvecScale[1] = 1.0f / inputHeight_;
+    // This direct NGX path consumes our pixel displacement field with unit scale.
+    // Streamline's normalized common-constant convention is not interchangeable:
+    // the 4K physical-GPU replay with 1/size behaved almost like zero motion,
+    // whereas 1,1 preserved the captured ~117-pixel pan and reduced double contours.
+    options.mvecScale[0] = options.mvecScale[1] = 1.0f;
     options.cameraUp[1] = options.cameraRight[0] = options.cameraFwd[2] = 1;
     options.cameraNear = DlssCaptureCamera::Near; options.cameraFar = DlssCaptureCamera::Far; options.cameraFOV = 1.04719755f;
     options.cameraAspectRatio = static_cast<float>(outputWidth_) / outputHeight_;
