@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../Source/FrameGeneration/EchoFrameGeneration.h"
 #include "../Source/FrameGeneration/EchoGuard.h"
+#include "../Source/FrameGeneration/DlssSampleCapture.h"
+#include <wincodec.h>
+#include <thread>
+#include <chrono>
+#include <fstream>
+#include <iterator>
 #include "../Source/Processing/ResourceBarrier.h"
 #include "../Source/Processing/RuntimeLibrary.h"
 #include <dxgi1_4.h>
@@ -79,9 +85,60 @@ struct Gpu12 {
         D3D12_RANGE none{0,0};read->Unmap(0,&none);return result;
     }
 };
+std::vector<unsigned char> ReadPng(const std::filesystem::path& path,UINT w,UINT h) {
+    ComPtr<IWICImagingFactory> factory;ComPtr<IWICBitmapDecoder> decoder;ComPtr<IWICBitmapFrameDecode> frame;ComPtr<IWICFormatConverter> converter;
+    CheckHr(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),"test WIC factory");
+    CheckHr(factory->CreateDecoderFromFilename(path.c_str(),nullptr,GENERIC_READ,WICDecodeMetadataCacheOnLoad,&decoder),"decode capture PNG");
+    CheckHr(decoder->GetFrame(0,&frame),"capture PNG frame");UINT width=0,height=0;CheckHr(frame->GetSize(&width,&height),"capture PNG size");
+    Require(width==w && height==h,"Capture dimensions must remain unchanged");
+    CheckHr(factory->CreateFormatConverter(&converter),"capture test converter");
+    CheckHr(converter->Initialize(frame.Get(),GUID_WICPixelFormat32bppRGBA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom),"convert captured PNG");
+    std::vector<unsigned char> pixels(static_cast<size_t>(w)*h*4);
+    CheckHr(converter->CopyPixels(nullptr,w*4,static_cast<UINT>(pixels.size()),pixels.data()),"read captured pixels");return pixels;
+}
+void TestSampleCapture(Gpu12& gpu) {
+    CheckHr(CoInitializeEx(nullptr,COINIT_MULTITHREADED),"capture test COM");
+    struct ComScope {~ComScope(){CoUninitialize();}} com;
+    constexpr unsigned w=8,h=8;
+    std::vector<unsigned char> a(w*h*4),b(a.size());
+    for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x) {
+        const auto i=(y*w+x)*4;a[i]=static_cast<unsigned char>(20+x);a[i+1]=static_cast<unsigned char>(70+y);a[i+2]=180;a[i+3]=255;
+        b[i]=160;b[i+1]=static_cast<unsigned char>(30+x);b[i+2]=static_cast<unsigned char>(50+y);b[i+3]=255;
+    }
+    auto first=gpu.Texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,a.data());
+    auto second=gpu.Texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,b.data());
+    auto made=gpu.Texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,b.data());
+    std::vector<unsigned> vectorBits(w*h,0x00003c00u);std::vector<float> depthData(w*h,.5f);
+    auto motion=gpu.Texture(w,h,DXGI_FORMAT_R16G16_FLOAT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,vectorBits.data());
+    auto depth=gpu.Texture(w,h,DXGI_FORMAT_R32_FLOAT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,depthData.data());
+    framegen::DlssSampleCapture capture;
+    Require(!capture.Before(gpu.list.Get(),first.Get(),depth.Get(),motion.Get(),6,false,L"WARP fixture"),"Unrequested capture must be inert");
+    Require(capture.Directory().empty(),"Unrequested capture must not create an output directory");
+    framegen::DlssSampleCapture::Request(false);
+    Require(!capture.Before(gpu.list.Get(),first.Get(),depth.Get(),motion.Get(),7,false,L"WARP fixture"),"Capture must establish a previous SDK input first");gpu.Finish();
+    Require(!capture.Before(gpu.list.Get(),second.Get(),depth.Get(),motion.Get(),9,false,L"WARP fixture"),"A frame ID gap must replace the capture baseline");gpu.Finish();
+    Require(capture.Before(gpu.list.Get(),first.Get(),depth.Get(),motion.Get(),10,false,L"WARP fixture"),"Consecutive pair must be captured");
+    capture.Context("synthetic capture fixture, not a NVIDIA evaluation");
+    std::array<ID3D12Resource*,3> outputs{made.Get(),nullptr,nullptr};capture.After(gpu.list.Get(),outputs,1);gpu.Finish();capture.Collect({0,0,0});
+    for(unsigned i=0;i<1000 && !capture.Completed();++i)std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    Require(capture.Completed(),"Capture writer must complete");
+    const auto directory=capture.Directory();
+    Require(std::filesystem::exists(directory/"manifest.txt"),"Completed capture must include metadata");
+    Require(ReadPng(directory/"previous.png",w,h)==b,"Previous SDK input must survive lossless capture");
+    Require(ReadPng(directory/"current.png",w,h)==a,"Current SDK input RGB order must survive capture");
+    Require(ReadPng(directory/"generated_1.png",w,h)==b,"Captured SDK output must be byte-exact in RGB");
+    std::ifstream raw(directory/"motion.raw",std::ios::binary);std::vector<char> rawBytes((std::istreambuf_iterator<char>(raw)),{});
+    Require(rawBytes.size()==vectorBits.size()*4 && std::memcmp(rawBytes.data(),vectorBits.data(),rawBytes.size())==0,"Half-float motion must be saved exactly without row padding");
+    std::ifstream manifestFile(directory/"manifest.txt");std::string manifest((std::istreambuf_iterator<char>(manifestFile)),{});
+    Require(manifest.find("previous_frame_id=9")!=std::string::npos && manifest.find("current_frame_id=10")!=std::string::npos,"Capture manifest must identify the actual consecutive pair");
+    Require(gpu.Read(made.Get())==b,"Diagnostic readback must not change generated pixels");
+    std::filesystem::remove_all(directory);
+    std::cout<<"One-shot DLSS sample capture, exact PNG/raw data and frame-ID gap passed (WARP)\n";
+}
 int main() {
     try {
         Gpu12 gpu;
+        TestSampleCapture(gpu);
         constexpr unsigned w=128,h=64;
         std::vector<unsigned char> a(w*h*4),b(a.size());
         auto pattern=[](unsigned x,unsigned y) {return static_cast<unsigned char>(32+(((x/8)*73856093u)^((y/8)*19349663u))%192);};

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <limits>
 #include <cstring>
+#include <sstream>
 #include "DlssCaptureCamera.h"
 #include "../Processing/LoadedModules.h"
 namespace framegen {
@@ -77,6 +78,21 @@ NVSDK_NGX_Result DlssMultiFrameGeneration::Evaluate(ID3D12GraphicsCommandList* l
     std::memcpy(options.clipToCameraView,camera.clipToView.data(),sizeof(options.clipToCameraView));
     options.mvecsSubrectSize = options.depthSubrectSize = {inputWidth_,inputHeight_};
     options.backbufferSubrectSize = options.outputInterpSubrectSize = {outputWidth_,outputHeight_};
+    if(capture_.Before(list,color,depth,motion,frameId_,reset,runtimeStatus_)) {
+        try {
+            std::ostringstream text;
+            text<<"input_size="<<inputWidth_<<'x'<<inputHeight_<<"\noutput_size="<<outputWidth_<<'x'<<outputHeight_
+                <<"\nmvec_scale="<<options.mvecScale[0]<<','<<options.mvecScale[1]<<"\nreset="<<reset
+                <<"\ndepth_inverted="<<options.depthInverted<<"\northo="<<options.orthoProjection<<"\ncamera_motion_included="<<options.cameraMotionIncluded
+                <<"\nnear="<<options.cameraNear<<"\nfar="<<options.cameraFar<<"\nfov="<<options.cameraFOV<<"\nhdr="<<hdr_<<'\n';
+            auto matrix=[&](const char* name,const float (&m)[4][4]) {
+                text<<name<<'=';for(const auto& row:m)for(float value:row)text<<value<<',';text<<'\n';
+            };
+            matrix("view_to_clip",options.cameraViewToClip);matrix("clip_to_view",options.clipToCameraView);
+            matrix("clip_to_previous",options.clipToPrevClip);matrix("previous_to_clip",options.prevClipToClip);
+            capture_.Context(text.str());
+        }catch(const std::exception&) {capture_.Context("SDK context unavailable");}
+    }
     for (unsigned i=0;i<count;++i) {
         ngx::Transition(list,disabled_[i].Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_DEST);
         list->CopyBufferRegion(disabled_[i].Get(),0,flagClearValue_.Get(),0,4);
@@ -92,6 +108,7 @@ NVSDK_NGX_Result DlssMultiFrameGeneration::Evaluate(ID3D12GraphicsCommandList* l
         list->CopyBufferRegion(readback_.Get(),i*4,disabled_[i].Get(),0,4);
         ngx::Transition(list,disabled_[i].Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
+    capture_.After(list,output,count);
     if (frameId_==1) runtimeStatus_=processing::LoadedDlssgStatus();
     return NVSDK_NGX_Result_Success;
 }
@@ -102,7 +119,9 @@ unsigned DlssMultiFrameGeneration::Collect() {
     ngx::CheckHr(readback_->Map(0,&range,&data),"Read MFG validity flags");
     const auto* bytes = static_cast<const unsigned char*>(data);
     bool valid = true;
-    for (unsigned i=0;i<pendingCount_;++i) valid = valid && bytes[i*4] == 0;
+    std::array<unsigned,3> flags{};
+    for (unsigned i=0;i<pendingCount_;++i) { valid = valid && bytes[i*4] == 0;std::memcpy(&flags[i],bytes+i*4,4); }
+    capture_.Collect(flags);
     const D3D12_RANGE empty{0,0};
     readback_->Unmap(0,&empty);
     return valid ? pendingCount_ : 0;

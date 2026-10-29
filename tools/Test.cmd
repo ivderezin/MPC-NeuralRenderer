@@ -43,7 +43,7 @@ if errorlevel 1 exit /b 1
 
 cl /nologo /std:c++20 /EHsc /W3 /WX- /DNOMINMAX /ISource\EchoStorm /c Source\EchoStorm\engine\own_synth.cpp Source\EchoStorm\engine\flow_estimator.cpp Source\EchoStorm\engine\flow_fix.cpp Source\EchoStorm\engine\shader_cache.cpp /Fo_bin\tests\
 if errorlevel 1 exit /b 1
-cl /nologo /std:c++20 /EHsc /W4 /WX /DNOMINMAX tests\EchoGenerationTests.cpp Source\FrameGeneration\EchoFrameGeneration.cpp Source\FrameGeneration\EchoGuard.cpp /Fo_bin\tests\ /Fe_bin\tests\EchoGenerationTests.exe /link _bin\tests\own_synth.obj _bin\tests\flow_estimator.obj _bin\tests\flow_fix.obj _bin\tests\shader_cache.obj d3d12.lib dxgi.lib d3dcompiler.lib shell32.lib ole32.lib uuid.lib
+cl /nologo /std:c++20 /EHsc /W4 /WX /DNOMINMAX tests\EchoGenerationTests.cpp Source\FrameGeneration\EchoFrameGeneration.cpp Source\FrameGeneration\EchoGuard.cpp Source\FrameGeneration\DlssSampleCapture.cpp /Fo_bin\tests\ /Fe_bin\tests\EchoGenerationTests.exe /link _bin\tests\own_synth.obj _bin\tests\flow_estimator.obj _bin\tests\flow_fix.obj _bin\tests\shader_cache.obj d3d12.lib dxgi.lib d3dcompiler.lib shell32.lib ole32.lib uuid.lib
 if errorlevel 1 exit /b 1
 _bin\tests\EchoGenerationTests.exe
 exit /b %errorlevel%

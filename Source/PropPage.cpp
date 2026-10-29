@@ -19,6 +19,7 @@
  */
 
 #include "stdafx.h"
+#include "FrameGeneration/DlssSampleCapture.h"
 #include "resource.h"
 #include "Helper.h"
 #include "DisplayConfig.h"
@@ -169,6 +170,7 @@ void CVRMainPPage::EnableControls()
 	GetDlgItem(IDC_FG_LIMIT_DISPLAY).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_ECHO_PIPELINE).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_DLSS_FG_GUARD).EnableWindow(neuralAvailable && m_neuralSettings.frameGenerator==processing::FrameGenerator::Dlss);
+	GetDlgItem(IDC_DLSS_SAVE_SAMPLE).EnableWindow(neuralAvailable && m_neuralSettings.frameGenerator==processing::FrameGenerator::Dlss && m_neuralSettings.frameMultiplier>1);
 	GetDlgItem(IDC_AMD_BRIDGE).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_MOTION_METHOD).EnableWindow(neuralAvailable);
     for (int id : {IDC_SHADER_PRE_ADD, IDC_SHADER_PRE_CLEAR, IDC_SHADER_POST_ADD, IDC_SHADER_POST_CLEAR})
@@ -447,6 +449,10 @@ INT_PTR CVRMainPPage::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 				SetDirty();
 				return (LRESULT)1;
 			}
+            if (nID == IDC_DLSS_SAVE_SAMPLE) {
+                framegen::DlssSampleCapture::Request();
+                return (LRESULT)1;
+            }
             if (nID == IDC_DLSS_FG_GUARD) {
                 m_neuralSettings.dlssFgGuard=IsDlgButtonChecked(IDC_DLSS_FG_GUARD)==BST_CHECKED;
                 SetDirty(); return (LRESULT)1;
@@ -592,7 +598,7 @@ INT_PTR CVRMainPPage::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 			}
 			if (nID == IDC_DLSS_MFG) {
 				m_neuralSettings.frameMultiplier = static_cast<unsigned>(ComboBox_GetCurItemData(m_hWnd, IDC_DLSS_MFG));
-				SetDirty(); return (LRESULT)1;
+				EnableControls(); SetDirty(); return (LRESULT)1;
 			}
 			if (nID == IDC_NEURAL_INTENSITY) {
 				m_neuralSettings.intensity = static_cast<int>(ComboBox_GetCurItemData(m_hWnd, IDC_NEURAL_INTENSITY));
