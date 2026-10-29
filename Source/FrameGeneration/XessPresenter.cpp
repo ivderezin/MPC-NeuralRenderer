@@ -98,7 +98,7 @@ struct XessPresenter::Impl {
     SharedTexture scene, vectors, repairedVectors, depth, distrust;
     neural::MotionRepair motionRepair;
     neural::MotionEstimator estimator;
-    bool echoMotion = false, echoReset = true;
+    bool echoMotion = false, echoReset = true, limitToDisplay = false;
     unsigned width = 0, height = 0, interpolations = 1, presentId = 0;
     unsigned long long lastToken = 0;
     bool validToken = false, reset = true, enabled = false, failed = false, displayLimited = false;
@@ -221,7 +221,8 @@ struct XessPresenter::Impl {
         CheckIntel(xefgSwapChainSetLatencyReductionFn(fg, latency), "Attach XeLL to XeSS FG");
         xefg_swapchain_properties_t properties{};
         CheckIntel(xefgSwapChainGetPropertiesFn(fg, &properties), "Query XeSS FG capabilities");
-        const auto limit = GeneratedLimit(multiplier, properties.maxSupportedInterpolations, refreshHz, frameTimeMs);
+        const auto limit = GeneratedLimit(multiplier, properties.maxSupportedInterpolations, refreshHz, frameTimeMs,
+                                          limitToDisplay);
         displayLimited = limit == 0;
         interpolations = (std::min)({multiplier - 1, properties.maxSupportedInterpolations, (std::max)(1u, limit)});
         if (!interpolations)
@@ -376,11 +377,13 @@ void XessPresenter::Reset() {
 }
 HRESULT XessPresenter::Create(ID3D11Device* device, ID3D11DeviceContext* context, IDXGIFactory2* factory, HWND window,
                               DXGI_SWAP_CHAIN_DESC1 description, unsigned multiplier, double refreshHz,
-                              float frameTimeMs, const std::filesystem::path& directory, IDXGISwapChain1** swapchain, bool echoMotion) {
+                              float frameTimeMs, const std::filesystem::path& directory, IDXGISwapChain1** swapchain,
+                              bool echoMotion, bool limitToDisplay) {
     Reset();
     try {
         auto instance = std::make_unique<Impl>();
         instance->echoMotion = echoMotion;
+        instance->limitToDisplay = limitToDisplay;
         instance->Initialize(device, context, factory, window, description, multiplier, refreshHz, frameTimeMs,
                              directory);
         CheckHr(instance->swapchain.CopyTo(swapchain), "Return XeSS swap chain");

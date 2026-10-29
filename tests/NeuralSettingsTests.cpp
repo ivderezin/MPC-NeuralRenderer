@@ -44,7 +44,7 @@ int main() {
         using processing::FrameGenerator;
         using processing::Upscaler;
         auto settings = neural::Settings::Load();
-        Require(settings.upscaler == Upscaler::Dlss && settings.frameMultiplier == 1 && settings.presentThread && settings.motionMethod == neural::MotionMethod::EchoStorm,
+        Require(settings.upscaler == Upscaler::Dlss && settings.frameMultiplier == 1 && settings.presentThread && !settings.limitGenerationToDisplay && settings.motionMethod == neural::MotionMethod::EchoStorm,
                 "Defaults changed");
         registry.Write(L"DlssUpscaling", 0);
         Require(neural::Settings::Load().upscaler == Upscaler::Off, "Legacy disabled SR must migrate");
@@ -58,6 +58,7 @@ int main() {
                 settings.amdBridge = generator == FrameGenerator::Fsr;
                 settings.intensity = 200;
                 settings.presentThread = generator == FrameGenerator::Fsr;
+                settings.limitGenerationToDisplay = generator == FrameGenerator::Xess;
                 settings.nrStage = static_cast<neural::NrStage>(static_cast<unsigned>(upscaler) % 3);
                 Require(settings.Save() == ERROR_SUCCESS, "Save failed");
                 Require(neural::Settings::Load() == settings, "Independent provider settings did not survive reload");

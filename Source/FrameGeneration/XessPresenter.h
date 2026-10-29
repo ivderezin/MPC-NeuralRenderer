@@ -19,7 +19,8 @@ class XessPresenter {
     const std::wstring& Status() const { return status_; }
     HRESULT Create(ID3D11Device* device, ID3D11DeviceContext* context, IDXGIFactory2* factory, HWND window,
                    DXGI_SWAP_CHAIN_DESC1 description, unsigned multiplier, double refreshHz, float frameTimeMs,
-                   const std::filesystem::path& directory, IDXGISwapChain1** swapchain, bool echoMotion = false);
+                   const std::filesystem::path& directory, IDXGISwapChain1** swapchain, bool echoMotion = false,
+                   bool limitToDisplay = false);
     HRESULT BackBuffer(ID3D11Texture2D** texture) const;
     HRESULT Resize(unsigned width, unsigned height);
     HRESULT Present(unsigned syncInterval, bool running, unsigned long long token, float frameTimeMs);

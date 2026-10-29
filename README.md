@@ -10,7 +10,7 @@
 
 - **NR**: нейрорендеринг с интенсивностью 0–200%, до апскейла, после него или в два прохода.
 - **Апскейл**: DLSS SR, FSR 3.1 или XeSS; можно использовать отдельно от NR и генерации.
-- **Генерация кадров**: DLSS MFG, FSR FG или XeSS FG, с ограничением множителя по возможностям GPU/драйвера и частоте дисплея.
+- **Генерация кадров**: DLSS MFG, FSR FG или XeSS FG, с ограничением множителя по возможностям GPU/драйвера; ограничение частотой дисплея опционально.
 - **Видео**: 8/10-битный SDR, HDR-источники и RTX Video HDR; pre/post-resize HLSL-шейдеры и горячие клавиши.
 
 Для нейрофункций нужны **Windows 10/11 x64**, **MPC-HC x64**, **Direct3D 11** и совместимые GPU/драйверы. Нейрообработка использует D3D11/D3D12 на одной видеокарте. Библиотеки NVIDIA устанавливаются отдельно; необходимые библиотеки AMD/Intel и их лицензии входят в сборку. Поддержку конкретной функции проверяет её SDK. D3D9 остаётся обычным путём вывода без нейрообработки.
@@ -46,6 +46,7 @@
    - **Upscaling** — Off / DLSS SR / FSR 3.1 / XeSS.
    - **Motion estimation** — **EchoStorm coarse-to-fine** (по умолчанию для новых настроек) или **Fast block matching**. Выбор общий для NR, апскейла и DLSS / FSR / XeSS FG; сохраняется по Apply. Сохранённый выбор Fast сохраняется: для перехода выберите EchoStorm и Apply. Базовый EchoStorm появился в `v0.1.3`; текущая ветка добавляет полный путь коррекции движения и защиты истории апскейлеров.
    - **Frame generation** — DLSS MFG / FSR FG / XeSS FG; **Multiplier** — Off / 2x / 3x / 4x.
+   - **Limit frame generation to monitor refresh rate** — ограничивать FG герцовкой монитора. По умолчанию выключено: выбранный множитель ограничивается возможностями провайдера. При включении возвращается прежнее автоматическое ограничение; настройка общая для DLSS / FSR / XeSS FG, сохраняется по Apply.
    - **Present DLSS / FSR generated frames from a dedicated thread** — показ сгенерированных кадров из отдельного потока с очередью пакетов вместо таймера в UI-потоке плеера. Меньше опозданий и потерянных реальных кадров; задержка — до одного интервала между кадрами.
 6. Нажмите **Apply**. Включите **Show statistics**, чтобы увидеть выбранные режимы, состояние обработки и причину отказа, если функция недоступна.
 
@@ -57,7 +58,7 @@
 
 Апскейл включается, только когда исходный кадр меньше разрешения монитора и области вывода: 1080p → 4K увеличивается, 4K → 4K — нет. NR получает полное исходное изображение. При выключенном или недоступном нейроапскейлере обычное масштабирование рендерера продолжает заполнять область просмотра с пропорциями, выбранными в плеере; уменьшение для размещения в окне также сохраняется. Исключение — экспериментальный режим FSR native AA для AMD-моста: он вызывает FSR и при 1:1.
 
-FSR 3.1 FG поддерживает **2x**. DLSS и XeSS используют доступный GPU / драйверу множитель в пределах выбранного. Частота монитора дополнительно ограничивает генерацию: для 60 FPS на 160 Гц максимум 2x. Для DLSS MFG нужны совместимая RTX, драйвер NVIDIA и включённое аппаратное планирование GPU (HAGS). Для XeSS FG используется D3D12 swap chain и XeLL; включайте его в оконном или безрамочном режиме с 8-битным SDR-выводом. Поддержку конкретного GPU проверяет SDK выбранного провайдера.
+FSR 3.1 FG поддерживает **2x**. DLSS и XeSS используют доступный GPU / драйверу множитель в пределах выбранного. Только при включённом **Limit frame generation to monitor refresh rate** действует дополнительный предел дисплея: например, 60 FPS на 160 Гц ограничиваются 2x. Без этой галочки 4x сохраняется при разной нагрузке NR; монитор и система показа могут отображать меньше кадров, чем произведено. Для DLSS MFG нужны совместимая RTX, драйвер NVIDIA и включённое аппаратное планирование GPU (HAGS). Для XeSS FG используется D3D12 swap chain и XeLL; включайте его в оконном или безрамочном режиме с 8-битным SDR-выводом. Поддержку конкретного GPU проверяет SDK выбранного провайдера.
 
 Генерация работает без апскейла. При перемотке, паузе и смене размера история сбрасывается. Входные кадры не накапливаются в очереди нейрообработки: пока GPU занят, используется последний готовый кадр. Очередь показа сгенерированных кадров ограничена отдельно; выделенный поток показа включён по умолчанию. Ошибка провайдера отображается в статистике, без автоматического переключения на другой алгоритм.
 
@@ -131,7 +132,7 @@ Video neural rendering, DLSS / FSR / XeSS upscaling, and frame generation inside
 
 - **NR**: neural rendering with 0–200% intensity, before upscaling, after it, or in two passes.
 - **Upscaling**: DLSS SR, FSR 3.1, or XeSS, independently of NR and frame generation.
-- **Frame generation**: DLSS MFG, FSR FG, or XeSS FG, capped by GPU/driver capabilities and display refresh rate.
+- **Frame generation**: DLSS MFG, FSR FG, or XeSS FG, capped by GPU/driver capabilities, with an optional display refresh limit.
 - **Video**: 8/10-bit SDR, HDR sources, and RTX Video HDR; pre/post-resize HLSL shaders and hotkeys.
 
 Neural features require **Windows 10/11 x64**, **MPC-HC x64**, **Direct3D 11**, and compatible GPU/drivers. Neural processing uses D3D11/D3D12 on the same GPU. NVIDIA libraries are supplied separately; required AMD/Intel libraries and licenses are bundled. Each provider's SDK checks feature support. D3D9 remains available for ordinary rendering without neural processing.
@@ -167,6 +168,7 @@ The project started from wanting to try neural rendering in Nintendo Switch 2 ga
    - **Upscaling** — Off / DLSS SR / FSR 3.1 / XeSS.
    - **Motion estimation** — **EchoStorm coarse-to-fine** (default for new settings) or **Fast block matching**. Applies to NR, upscaling, and DLSS / FSR / XeSS FG; saved with Apply. An explicitly saved Fast choice is preserved; select EchoStorm and Apply to switch. Basic EchoStorm support shipped in `v0.1.3`; the current branch adds the full motion-repair and upscaler history-protection path.
    - **Frame generation** — DLSS MFG / FSR FG / XeSS FG; **Multiplier** — Off / 2x / 3x / 4x.
+   - **Limit frame generation to monitor refresh rate** — optional display refresh cap, off by default. When off, the selected multiplier is capped only by provider capabilities; when on, the previous automatic display cap applies. Shared by DLSS / FSR / XeSS FG and saved with Apply.
    - **Present DLSS / FSR generated frames from a dedicated thread** — presents generated frames from a dedicated thread with a queued schedule instead of a timer on the player's UI thread. Fewer late and dropped real frames, at up to one frame interval of extra latency.
 6. Click **Apply**. Enable **Show statistics** to see the selected modes, processing status, and the reason if a feature is unavailable.
 
@@ -178,7 +180,7 @@ The current branch adds EchoStorm local-consensus repair for ambiguous vectors o
 
 Upscaling runs only when the source frame is smaller than both the monitor resolution and the output area: 1080p → 4K is upscaled; 4K → 4K is not. NR receives the full source image. With neural upscaling disabled or unavailable, the renderer uses ordinary resizing to fill the viewport according to the player's aspect ratio setting; downscaling to fit the window remains available. Experimental FSR native AA for the AMD bridge is an exception: it also dispatches FSR at 1:1.
 
-FSR 3.1 FG supports **2x**. DLSS and XeSS use the GPU / driver-supported multiplier, up to the selected value. The monitor refresh rate further limits generation: 60 FPS on a 160 Hz display allows up to 2x. DLSS MFG requires a compatible RTX GPU, an NVIDIA driver, and Hardware-Accelerated GPU Scheduling (HAGS). XeSS FG uses a D3D12 swap chain and XeLL; use windowed or borderless mode with 8-bit SDR output. The selected provider's SDK checks GPU support.
+FSR 3.1 FG supports **2x**. DLSS and XeSS use the GPU / driver-supported multiplier, up to the selected value. The display cap applies only with **Limit frame generation to monitor refresh rate** checked: for example, 60 FPS on a 160 Hz display is capped at 2x. With it off, 4x remains selected across NR load changes; the monitor/presentation system may show fewer frames than generated. DLSS MFG requires a compatible RTX GPU, an NVIDIA driver, and Hardware-Accelerated GPU Scheduling (HAGS). XeSS FG uses a D3D12 swap chain and XeLL; use windowed or borderless mode with 8-bit SDR output. The selected provider's SDK checks GPU support.
 
 Frame generation works without upscaling. Seeking, pausing, and resizing reset the history. Input frames do not build up an inference queue: while the GPU is busy, the latest completed frame is used. Generated-frame presentation has its own bounded queue; dedicated-thread presentation is enabled by default. Provider errors appear in the statistics without automatically switching to another algorithm.
 

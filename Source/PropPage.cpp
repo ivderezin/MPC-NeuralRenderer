@@ -92,6 +92,7 @@ void CVRMainPPage::SetControls()
 	CheckDlgButton(IDC_NEURAL_ENABLED, m_neuralSettings.enabled ? BST_CHECKED : BST_UNCHECKED);
 	ComboBox_SelectByItemData(m_hWnd, IDC_NR_STAGE, static_cast<unsigned>(m_neuralSettings.nrStage));
 	CheckDlgButton(IDC_MFG_PRESENT_THREAD, m_neuralSettings.presentThread ? BST_CHECKED : BST_UNCHECKED);
+	CheckDlgButton(IDC_FG_LIMIT_DISPLAY, m_neuralSettings.limitGenerationToDisplay ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_AMD_BRIDGE, m_neuralSettings.amdBridge ? BST_CHECKED : BST_UNCHECKED);
 	ComboBox_SelectByItemData(m_hWnd, IDC_MOTION_METHOD, static_cast<unsigned>(m_neuralSettings.motionMethod));
 	ComboBox_SelectByItemData(m_hWnd, IDC_NEURAL_INTENSITY, m_neuralSettings.intensity);
@@ -163,6 +164,7 @@ void CVRMainPPage::EnableControls()
 	GetDlgItem(IDC_FRAME_GENERATOR).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_DLSS_MFG).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_MFG_PRESENT_THREAD).EnableWindow(neuralAvailable);
+	GetDlgItem(IDC_FG_LIMIT_DISPLAY).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_AMD_BRIDGE).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_MOTION_METHOD).EnableWindow(neuralAvailable);
     for (int id : {IDC_SHADER_PRE_ADD, IDC_SHADER_PRE_CLEAR, IDC_SHADER_POST_ADD, IDC_SHADER_POST_CLEAR})
@@ -433,6 +435,11 @@ INT_PTR CVRMainPPage::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 			}
 			if (nID == IDC_MFG_PRESENT_THREAD) {
 				m_neuralSettings.presentThread = IsDlgButtonChecked(IDC_MFG_PRESENT_THREAD) == BST_CHECKED;
+				SetDirty();
+				return (LRESULT)1;
+			}
+			if (nID == IDC_FG_LIMIT_DISPLAY) {
+				m_neuralSettings.limitGenerationToDisplay = IsDlgButtonChecked(IDC_FG_LIMIT_DISPLAY) == BST_CHECKED;
 				SetDirty();
 				return (LRESULT)1;
 			}

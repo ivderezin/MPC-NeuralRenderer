@@ -37,6 +37,7 @@ struct Settings {
     unsigned frameMultiplier = 1;
     // Present DLSS / FSR generated frames from a dedicated thread with a queued schedule.
     bool presentThread = true;
+    bool limitGenerationToDisplay = false;
     bool operator==(const Settings&) const = default;
     static Settings Load();
     long Save() const;

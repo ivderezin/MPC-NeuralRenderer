@@ -33,6 +33,7 @@
 #include "FrameGeneration/PresentationThread.h"
 #include <mutex>
 #include "FrameGeneration/XessPresenter.h"
+#include "FrameGeneration/DisplayCadence.h"
 #include "DX11Helper.h"
 #include "D3D11VP.h"
 #include "D3DUtil/D3D11Font.h"
@@ -69,6 +70,7 @@ private:
 	bool m_mfgActive = false;
 	int m_pipelineRotation = 0;
 	CDrawStats m_outputStats; // every successful Present, real and generated
+	framegen::DisplayCadence m_displayCadence; // DXGI displayed-image statistics, when available
 	struct {
 		unsigned generated = 0, real = 0, skipped = 0, stops = 0;
 	} m_mfgCounters;

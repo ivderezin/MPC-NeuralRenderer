@@ -950,7 +950,7 @@ struct NeuralPass::Impl {
         }
         if (fgUsable) {
             const auto count = framegen::GeneratedLimit(options.frameMultiplier, frameGeneration.MaxGenerated(),
-                                                        refreshHz, frameTimeMs);
+                                                        refreshHz, frameTimeMs, options.limitGenerationToDisplay);
             fgLimitedByDisplay = count == 0;
             if (count) {
                 std::array<ID3D12Resource*, 3> outputs{};

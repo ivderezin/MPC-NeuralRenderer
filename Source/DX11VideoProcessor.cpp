@@ -802,6 +802,7 @@ void CDX11VideoProcessor::ReleaseDevice()
 
 void CDX11VideoProcessor::ReleaseSwapChain()
 {
+	m_displayCadence.Reset();
 	StopMfgPresentation();
 	if (m_pDXGISwapChain1 && !m_xessPresenter.Active()) {
 		m_pDXGISwapChain1->SetFullscreenState(FALSE, nullptr);
@@ -1843,7 +1844,8 @@ HRESULT CDX11VideoProcessor::InitSwapChain(bool bWindowChanged)
 				hr = m_xessPresenter.Create(m_pDevice, m_pDeviceContext, m_pDXGIFactory2, m_hWnd, desc1,
 					m_processingSettings.frameMultiplier, m_neuralRefreshHz,
 					static_cast<float>(m_rtAvgTimePerFrame > 0 ? m_rtAvgTimePerFrame : 166667) / 10000.0f,
-					processing::ModuleDirectory(), &m_pDXGISwapChain1, m_processingSettings.motionMethod == neural::MotionMethod::EchoStorm);
+					processing::ModuleDirectory(), &m_pDXGISwapChain1, m_processingSettings.motionMethod == neural::MotionMethod::EchoStorm,
+					m_processingSettings.limitGenerationToDisplay);
 				if (SUCCEEDED(hr)) desc1.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 			} catch (...) { hr = E_FAIL; }
 		}
@@ -3125,7 +3127,8 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 				{
 					std::lock_guard lock(m_mfgQueueLock);
 					queued = m_mfgQueue.Add(now.QuadPart, duration, generatedCount, m_neuralRefreshHz,
-						static_cast<double>(frequency.QuadPart), outputSerial);
+							static_cast<double>(frequency.QuadPart), outputSerial, &m_mfgCounters.skipped,
+							m_processingSettings.limitGenerationToDisplay);
 					if (!queued) m_mfgQueue.Clear();
 				}
 				m_mfgActive = queued;
@@ -3138,7 +3141,8 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 					catch (...) { StopMfgPresentation(); }
 				}
 			} else {
-				m_mfgPlan.Start(now.QuadPart,duration,generatedCount,m_neuralRefreshHz,static_cast<double>(frequency.QuadPart));
+				m_mfgPlan.Start(now.QuadPart,duration,generatedCount,m_neuralRefreshHz,static_cast<double>(frequency.QuadPart),
+					m_processingSettings.limitGenerationToDisplay);
 				m_mfgActive = m_mfgPlan.Pending()
 					&& GetPropW(m_pFilter->m_hWndParentMain,L"MPCNeuralRenderer.This") == m_pFilter;
 				if (m_mfgActive) {
@@ -3252,7 +3256,17 @@ HRESULT CDX11VideoProcessor::PresentFrame(unsigned syncInterval, bool running)
 		hr = m_xessPresenter.Present(syncInterval, running && !m_processingSuspended, token,
 			static_cast<float>(duration > 0 ? duration : 166667) / 10000.0f);
 	}
-	if (hr == S_OK) m_outputStats.Add(GetPreciseTick());
+	if (hr == S_OK) {
+		m_outputStats.Add(GetPreciseTick());
+		if (m_bShowStats && !m_xessPresenter.Active()) {
+			DXGI_FRAME_STATISTICS stats{};
+			if (m_pDXGISwapChain1->GetFrameStatistics(&stats) == S_OK) {
+				LARGE_INTEGER frequency{};
+				QueryPerformanceFrequency(&frequency);
+				m_displayCadence.Observe(stats.PresentCount, stats.SyncQPCTime.QuadPart, frequency.QuadPart);
+			} else m_displayCadence.Reset();
+		}
+	}
 	return hr;
 }
 
@@ -4513,6 +4527,7 @@ void CDX11VideoProcessor::Configure(const Settings_t& config)
 	// Start presentation statistics afresh so each configuration can be compared on its own.
 	m_mfgCounters = {};
 	m_outputStats.Reset();
+	m_displayCadence.Reset();
 	m_mfgThread.ResetRetries();
 	framegen::PresentationTimer::ResetRetryCount();
 	const bool neuralWasEnabled = m_neuralPass.Enabled();
@@ -4522,7 +4537,8 @@ void CDX11VideoProcessor::Configure(const Settings_t& config)
 		|| m_processingSettings.frameGenerator == processing::FrameGenerator::Xess)
 		&& (previousProcessing.frameGenerator != m_processingSettings.frameGenerator
 			|| previousProcessing.frameMultiplier != m_processingSettings.frameMultiplier
-            || previousProcessing.motionMethod != m_processingSettings.motionMethod);
+            || previousProcessing.motionMethod != m_processingSettings.motionMethod
+            || previousProcessing.limitGenerationToDisplay != m_processingSettings.limitGenerationToDisplay);
 	m_neuralPass.Configure(m_processingSettings);
 	m_neuralPass.ClearHistory();
 	m_xessPresenter.ClearHistory();
@@ -5135,10 +5151,16 @@ HRESULT CDX11VideoProcessor::DrawStats(ID3D11Texture2D* pRenderTarget)
 		str += L"\n" + (m_xessPresenter.Status().empty()
 			? std::wstring(L"XeSS FG: requires windowed SDR / 8-bit output") : m_xessPresenter.Status());
 	}
-	str += std::format(L"\nOutput: {:.1f} fps (all presents)", m_outputStats.GetAverageFps());
+	str += std::format(L"\nOutput: {:.1f} fps (Present calls)", m_outputStats.GetAverageFps());
+	str += m_displayCadence.Available()
+		? std::format(L", DXGI shown: {:.1f} fps", m_displayCadence.Fps())
+		: L", DXGI shown: unavailable";
+	if (m_processingSettings.frameMultiplier > 1)
+		str += m_processingSettings.limitGenerationToDisplay
+			? L"\nFG monitor refresh cap: on" : L"\nFG monitor refresh cap: off";
 	if (m_mfgActive || m_mfgCounters.generated || m_mfgCounters.stops) {
 		const bool thread = m_processingSettings.presentThread;
-		str += std::format(L"\nMFG presents ({}): generated {}, real {}, late-skipped {}, plan stops {}, lock retries {}",
+		str += std::format(L"\nMFG presents ({}): generated {}, real {}, skipped {}, plan stops {}, lock retries {}",
 			thread ? L"thread" : L"UI timer", m_mfgCounters.generated, m_mfgCounters.real, m_mfgCounters.skipped,
 			m_mfgCounters.stops, thread ? m_mfgThread.Retries() : framegen::PresentationTimer::RetryCount());
 	}
