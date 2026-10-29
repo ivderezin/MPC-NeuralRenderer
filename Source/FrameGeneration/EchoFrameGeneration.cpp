@@ -13,7 +13,7 @@ using Microsoft::WRL::ComPtr;
 using processing::Transition;
 using processing::CheckHr;
 struct EchoFrameGeneration::Impl {
-    ComPtr<ID3D12Device> device;
+    ComPtr<ID3D12Device> exportDevice;
     ComPtr<ID3D12RootSignature> exportRoot;
     ComPtr<ID3D12PipelineState> exportPipeline;
     ComPtr<ID3D12DescriptorHeap> exportHeap;
@@ -42,7 +42,7 @@ EchoFrameGeneration::EchoFrameGeneration()=default;
 EchoFrameGeneration::~EchoFrameGeneration()=default;
 void EchoFrameGeneration::Create(ID3D12Device* device,unsigned width,unsigned height,bool hdr,bool motionOnly,DXGI_FORMAT inputFormat) {
     auto next=std::make_unique<Impl>();
-    next->device=device;
+    next->exportDevice=device;
     next->width=width; next->height=height; next->hdr=hdr; next->motionOnly=motionOnly;
     next->scale=width>2560 ? 2u : 1u;
     auto log=[p=next.get()](const char* message) { p->error=message; };
@@ -126,24 +126,24 @@ cbuffer C : register(b0) { uint2 sourceSize; uint2 targetSize; float fast; uint 
         D3D12_ROOT_SIGNATURE_DESC root{};root.NumParameters=2;root.pParameters=params;
         ComPtr<ID3DBlob> signature,code,errors;
         CheckHr(D3D12SerializeRootSignature(&root,D3D_ROOT_SIGNATURE_VERSION_1,&signature,&errors),"Serialize native guidance export");
-        CheckHr(p.device->CreateRootSignature(0,signature->GetBufferPointer(),signature->GetBufferSize(),IID_PPV_ARGS(&p.exportRoot)),"Create native guidance root");
+        CheckHr(p.exportDevice->CreateRootSignature(0,signature->GetBufferPointer(),signature->GetBufferSize(),IID_PPV_ARGS(&p.exportRoot)),"Create native guidance root");
         CheckHr(D3DCompile(shader,sizeof(shader)-1,"EchoGuidance",nullptr,nullptr,"main","cs_5_0",D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code,&errors),"Compile native guidance export");
         D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline{};pipeline.pRootSignature=p.exportRoot.Get();pipeline.CS={code->GetBufferPointer(),code->GetBufferSize()};
-        CheckHr(p.device->CreateComputePipelineState(&pipeline,IID_PPV_ARGS(&p.exportPipeline)),"Create native guidance export");
+        CheckHr(p.exportDevice->CreateComputePipelineState(&pipeline,IID_PPV_ARGS(&p.exportPipeline)),"Create native guidance export");
         D3D12_DESCRIPTOR_HEAP_DESC heap{};heap.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;heap.NumDescriptors=16;heap.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-        CheckHr(p.device->CreateDescriptorHeap(&heap,IID_PPV_ARGS(&p.exportHeap)),"Create native guidance descriptors");
-        p.descriptorStride=p.device->GetDescriptorHandleIncrementSize(heap.Type);
+        CheckHr(p.exportDevice->CreateDescriptorHeap(&heap,IID_PPV_ARGS(&p.exportHeap)),"Create native guidance descriptors");
+        p.descriptorStride=p.exportDevice->GetDescriptorHandleIncrementSize(heap.Type);
     }
     const auto pass=p.exportIndex++;
     auto cpu=p.exportHeap->GetCPUDescriptorHandleForHeapStart();cpu.ptr+=static_cast<SIZE_T>(pass)*4*p.descriptorStride;
     for(auto* resource:{p.repaired.Get(),p.distrust.Get()}) {
         D3D12_SHADER_RESOURCE_VIEW_DESC srv{};srv.Format=resource->GetDesc().Format;srv.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
         srv.Texture2D.MipLevels=1;srv.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        p.device->CreateShaderResourceView(resource,&srv,cpu);cpu.ptr+=p.descriptorStride;
+        p.exportDevice->CreateShaderResourceView(resource,&srv,cpu);cpu.ptr+=p.descriptorStride;
     }
     for(auto* resource:{output,confidence}) {
         D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};uav.Format=resource ? resource->GetDesc().Format : DXGI_FORMAT_R8_UNORM;uav.ViewDimension=D3D12_UAV_DIMENSION_TEXTURE2D;
-        p.device->CreateUnorderedAccessView(resource,nullptr,&uav,cpu);cpu.ptr+=p.descriptorStride;
+        p.exportDevice->CreateUnorderedAccessView(resource,nullptr,&uav,cpu);cpu.ptr+=p.descriptorStride;
     }
     for(auto* resource:{p.repaired.Get(),p.distrust.Get()}) Transition(list,resource,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     for(auto* resource:{output,confidence}) if(resource) Transition(list,resource,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
