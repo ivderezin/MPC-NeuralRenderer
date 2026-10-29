@@ -248,15 +248,21 @@ int wmain(int argc,wchar_t** argv) {
                 <<"; zero_motion="<<variant.zeroMotion<<"; hudless="<<controls.hudlessColor
                 <<"; empty_ui="<<variant.emptyUi<<"; video="<<controls.video<<"; dilated="<<variant.prepared<<'\n';
             std::array<ID3D12Resource*,3> outputs{made.Get(),nullptr,nullptr};unsigned published=0;
+            bool evaluationFailed=false;
             for(unsigned step=0;step<4;++step) {
                 auto* source=step==3 ? b.Get() : a.Get();auto* vectors=step==3 && !variant.zeroMotion ? mv.Get() : mv0.Get();
                 if(!variant.color)gpu.Copy(colorScratch.Get(),source);
                 if(!variant.motion)gpu.Copy(motionScratch.Get(),vectors);
                 const auto result=generator.Evaluate(gpu.list.Get(),variant.color ? source : colorScratch.Get(),z.Get(),variant.motion ? vectors : motionScratch.Get(),outputs,1,step==0);
-                gpu.Finish();ngx::Check(result,"Replay DLSS evaluation");published=generator.Collect();
+                gpu.Finish();
+                if(result!=NVSDK_NGX_Result_Success) {
+                    report<<"evaluation_failed_at_step="<<step<<"; ngx_status=0x"<<std::hex<<static_cast<unsigned>(result)<<std::dec<<'\n';
+                    evaluationFailed=true;break;
+                }
+                published=generator.Collect();
             }
             report<<variant.name<<": published="<<published<<"; ";
-            if(published) {
+            if(published && !evaluationFailed) {
                 const auto result=gpu.Read(made.Get());SavePng(factory.Get(),output/(std::string(variant.name)+".png"),result);
                 report<<"midpoint_error="<<MidpointError(previous,current,result,motion);
                 if(!baseline)baseline=result;
@@ -267,7 +273,7 @@ int wmain(int argc,wchar_t** argv) {
                 }
                 report<<"; baseline_changed_rgb_components="<<changed
                     <<"; baseline_rgb_mae="<<difference/(static_cast<double>(result.w)*result.h*3)<<'\n';
-            }else report<<"SDK disabled interpolation\n";
+            }else report<<(evaluationFailed ? "SDK rejected this control\n" : "SDK disabled interpolation\n");
             const auto runtime=generator.RuntimeStatus();
             const int length=WideCharToMultiByte(CP_UTF8,0,runtime.data(),static_cast<int>(runtime.size()),nullptr,0,nullptr,nullptr);
             std::string utf8(static_cast<size_t>(length),0);WideCharToMultiByte(CP_UTF8,0,runtime.data(),static_cast<int>(runtime.size()),utf8.data(),length,nullptr,nullptr);
