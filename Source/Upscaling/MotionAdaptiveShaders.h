@@ -24,7 +24,7 @@ float4 CatmullRom(float2 uv) {   // 16 loads, the input's size
         sum += t * (wx[i] * wy[j]);
         if (i >= 1 && i <= 2 && j >= 1 && j <= 2) { lo = min(lo, t); hi = max(hi, t); }   // the four texels the sample lies among
     }
-    // HDR (mode bit 1): the negative lobes ring around a bright glint, and in light that is a speck: the result stays within the four nearest texels' range (as EASU's does)
+    // Hold ringing within the nearest four texels, including in the HDR proxy.
     return clamp(sum, lo, hi);
 }
 

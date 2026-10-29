@@ -4,7 +4,7 @@
 #include <wrl/client.h>
 #include <array>
 namespace neural {
-// EchoStorm's local consensus resolves ambiguous flat/repeating patches for FG.
+// EchoStorm's local consensus resolves ambiguous flat/repeating patches.
 // The input field is never overwritten; callers choose the repaired or original view.
 class MotionRepair {
     template<class T> using Ptr = Microsoft::WRL::ComPtr<T>;

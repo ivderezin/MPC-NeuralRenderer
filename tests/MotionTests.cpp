@@ -258,6 +258,22 @@ int main() {
         auto tinyVectors=gpu.Texture(13,11,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_SHADER_RESOURCE,std::vector<float>(13*11*2,0.f).data(),13*8);
         repair.Dispatch(gpu.context.Get(),flat.srv.Get(),flat.srv.Get(),tinyVectors.srv.Get(),nullptr,oddMotion.uav.Get());
         for (float value:gpu.Read(oddMotion,2)) Require(value==0,"FG repair must handle odd and partial tiles");
+        // Full-resolution 4K vectors exceed the upstream half-size voting range.
+        // Keep the test short vertically, with partial edge cells/tiles.
+        constexpr UINT wideWidth=3841, wideHeight=17;
+        std::vector<float> widePixels(wideWidth*wideHeight*4,.4f), wideMotion(wideWidth*wideHeight*2,0.f);
+        auto wideFrame=gpu.Texture(wideWidth,wideHeight,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,widePixels.data(),wideWidth*16);
+        auto wideOutput=gpu.Texture(wideWidth,wideHeight,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+        repair.Initialize(gpu.device.Get(),wideWidth,wideHeight);
+        for (float cameraShift : {96.f,-80.f}) {
+            for (UINT y=0;y<wideHeight;++y) for (UINT x=0;x<wideWidth;++x)
+                wideMotion[(static_cast<size_t>(y)*wideWidth+x)*2]=(x>=1920 && x<1952) ? 0.f : cameraShift;
+            auto wideInput=gpu.Texture(wideWidth,wideHeight,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_SHADER_RESOURCE,wideMotion.data(),wideWidth*8);
+            repair.Dispatch(gpu.context.Get(),wideFrame.srv.Get(),wideFrame.srv.Get(),wideInput.srv.Get(),nullptr,wideOutput.uav.Get());
+            const auto field=gpu.Read(wideOutput,2);
+            Require(std::abs(field[(8*wideWidth+1936)*2]-cameraShift)<.05f,
+                    "4K consensus must retain camera vectors beyond 64 source pixels");
+        }
         // Provider-independent protection also covers DLSS models ignoring bias masks.
         auto adaptiveShader=gpu.Compile(upscaling::MotionAdaptiveShader);
         D3D11_SAMPLER_DESC sampleDesc{};

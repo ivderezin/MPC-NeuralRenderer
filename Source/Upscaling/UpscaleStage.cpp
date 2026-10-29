@@ -113,6 +113,9 @@ struct UpscaleStage::Impl {
             CheckIntel(xess.Get<decltype(&xessD3D12Init)>("xessD3D12Init")(xessContext, &create), "Initialize XeSS");
             CheckIntel(xess.Get<decltype(&xessSetVelocityScale)>("xessSetVelocityScale")(xessContext, 1, 1),
                        "Set XeSS motion scale");
+            if (motionConfidence)
+                CheckIntel(xess.Get<decltype(&xessSetMaxResponsiveMaskValue)>("xessSetMaxResponsiveMaskValue")(
+                    xessContext, 1.f), "Enable full XeSS responsive mask range");
         } else
             throw std::runtime_error("No upscaler selected");
     }
