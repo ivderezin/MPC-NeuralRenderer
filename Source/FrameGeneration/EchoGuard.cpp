@@ -35,11 +35,11 @@ void EchoGuard::Create(ID3D12Device* device,UINT width,UINT height,bool hdr) {
     stride_=device->GetDescriptorHandleIncrementSize(heap.Type);
     D3D12_HEAP_PROPERTIES properties{};properties.Type=D3D12_HEAP_TYPE_DEFAULT;properties.CreationNodeMask=properties.VisibleNodeMask=1;
     D3D12_RESOURCE_DESC desc{};desc.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;desc.Width=4;
-    desc.Height=desc.DepthOrArraySize=desc.MipLevels=desc.SampleDesc.Count=1;desc.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    desc.Height=1; desc.DepthOrArraySize=1; desc.MipLevels=1; desc.SampleDesc.Count=1;desc.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     CheckHr(device->CreateCommittedResource(&properties,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,nullptr,IID_PPV_ARGS(&mean_)),"Create guard mean");
     desc={};desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;desc.Width=width;desc.Height=height;
-    desc.DepthOrArraySize=desc.MipLevels=desc.SampleDesc.Count=1;desc.Format=hdr ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.DepthOrArraySize=1; desc.MipLevels=1; desc.SampleDesc.Count=1;desc.Format=hdr ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
     CheckHr(device->CreateCommittedResource(&properties,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&before_)),"Create guard history");
     desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     CheckHr(device->CreateCommittedResource(&properties,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,nullptr,IID_PPV_ARGS(&scratch_)),"Create guard scratch");

@@ -86,7 +86,7 @@ void EchoNr::Reset() {
     impl_.reset();
 }
 void EchoNr::Invalidate() {
-    if (impl_) { impl_->reset=true; impl_->haveTimestamp=false; }
+    if (impl_) { impl_->reset=true; impl_->haveTimestamp=false; impl_->lastQueued=0; impl_->stamps={}; }
 }
 void EchoNr::Submit(ID3D11Device* device,ID3D11DeviceContext* context,ID3D11Texture2D* frame,
                     const RECT& rect,long long timestamp,bool hdr,const Settings& settings) {
@@ -147,7 +147,7 @@ void EchoNr::Submit(ID3D11Device* device,ID3D11DeviceContext* context,ID3D11Text
     } catch (const std::exception& e) { if (impl_) {impl_->Log(e.what());impl_->state.store(2);} }
 }
 void EchoNr::Compose(ID3D11DeviceContext* context,ID3D11Texture2D* target,const RECT& viewport,
-                     long long timestamp,bool generated) {
+                     long long timestamp,bool generated,int rotation,bool flip) {
     if (!impl_ || !impl_->bridgeReady || impl_->state.load()!=1) return;
     auto& p=*impl_;
     ID3D11ShaderResourceView* delta=nullptr;
@@ -157,6 +157,7 @@ void EchoNr::Compose(ID3D11DeviceContext* context,ID3D11Texture2D* target,const 
     if (stamp.index!=frame || stamp.interval<=0) return;
     D3D11_TEXTURE2D_DESC desc{}; target->GetDesc(&desc);
     Compose11::Args args;
+    args.rotation=static_cast<unsigned>(rotation); args.flip=flip;
     args.target=target; args.delta=delta; args.motion=p.bridge.MotionOf(frame);
     args.offset=std::clamp(static_cast<float>(timestamp-stamp.timestamp)/static_cast<float>(stamp.interval),-4.f,8.f);
     args.intensity=p.params.composeIntensity; args.maxDelta=p.params.maxDelta;
@@ -188,7 +189,7 @@ struct EchoNr::Impl {};
 EchoNr::EchoNr()=default; EchoNr::~EchoNr()=default;
 void EchoNr::Reset() {} void EchoNr::Invalidate() {}
 void EchoNr::Submit(ID3D11Device*,ID3D11DeviceContext*,ID3D11Texture2D*,const RECT&,long long,bool,const Settings&) {}
-void EchoNr::Compose(ID3D11DeviceContext*,ID3D11Texture2D*,const RECT&,long long,bool) {}
+void EchoNr::Compose(ID3D11DeviceContext*,ID3D11Texture2D*,const RECT&,long long,bool,int,bool) {}
 std::wstring EchoNr::Status() const { return L"Echo NR requires x64"; }
 }
 #endif

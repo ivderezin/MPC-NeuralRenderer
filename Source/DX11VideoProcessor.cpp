@@ -3163,7 +3163,7 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 	if (!m_pPSHalfOUtoInterlace) {
 		if (m_processingSettings.echoPipeline && m_processingSettings.enabled && !m_processingSuspended)
 			m_echoNr.Compose(m_pDeviceContext,pBackBuffer,m_videoRect,
-				m_neuralPass.OutputSerial() ? m_neuralPass.OutputTimestamp() : m_neuralFrameTimestamp,false);
+				m_neuralPass.OutputSerial() ? m_neuralPass.OutputTimestamp() : m_neuralFrameTimestamp,false,m_pipelineRotation,m_bFlip);
 		DrawSubtitles(pBackBuffer);
 	}
 
@@ -3305,7 +3305,7 @@ HRESULT CDX11VideoProcessor::DrawPresentationFrame(ID3D11Texture2D* frame,long l
 	}
 	hr = DrawProcessedTexture(texture,backBuffer,CRect(0,0,texture.desc.Width,texture.desc.Height),m_videoRect,m_pipelineRotation);
 	if (SUCCEEDED(hr) && m_processingSettings.echoPipeline && m_processingSettings.enabled)
-		m_echoNr.Compose(m_pDeviceContext,backBuffer,m_videoRect,timestamp,generated);
+		m_echoNr.Compose(m_pDeviceContext,backBuffer,m_videoRect,timestamp,generated,m_pipelineRotation,m_bFlip);
 	if (SUCCEEDED(hr)) DrawSubtitles(backBuffer);
 	if (SUCCEEDED(hr)) DrawProcessingMessage(backBuffer);
 	if (SUCCEEDED(hr) && m_bShowStats) DrawStats(backBuffer);

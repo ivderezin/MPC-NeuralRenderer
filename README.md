@@ -8,9 +8,9 @@
 
 ### Возможности и требования
 
-- **NR**: нейрорендеринг с интенсивностью 0–200%, до апскейла, после него или в два прохода.
+- **NR**: независимый движок EchoStorm с добавкой к свежим показываемым кадрам, интенсивность 0–200%; прежние режимы до/после апскейла доступны при отключении независимого пути.
 - **Апскейл**: DLSS SR, FSR 3.1 или XeSS; можно использовать отдельно от NR и генерации.
-- **Генерация кадров**: DLSS MFG, FSR FG или XeSS FG, с ограничением множителя по возможностям GPU/драйвера; ограничение частотой дисплея опционально.
+- **Генерация кадров**: EchoFG (по умолчанию для новых настроек), DLSS MFG, FSR FG или XeSS FG, с ограничением множителя по возможностям GPU/драйвера; ограничение частотой дисплея опционально.
 - **Видео**: 8/10-битный SDR, HDR-источники и RTX Video HDR; pre/post-resize HLSL-шейдеры и горячие клавиши.
 
 Для нейрофункций нужны **Windows 10/11 x64**, **MPC-HC x64**, **Direct3D 11** и совместимые GPU/драйверы. Нейрообработка использует D3D11/D3D12 на одной видеокарте. Библиотеки NVIDIA устанавливаются отдельно; необходимые библиотеки AMD/Intel и их лицензии входят в сборку. Поддержку конкретной функции проверяет её SDK. D3D9 остаётся обычным путём вывода без нейрообработки.
@@ -42,10 +42,11 @@
 4. В MPC-HC x64 откройте **Options → External Filters → Add Filter → MPC Neural Renderer → Prefer**. Если фильтра нет в списке, нажмите **Browse** и укажите `nvngx.dll_MpcNeuralRenderer64.ax`.
 5. Откройте видео или устройство захвата. Через **Play → Filters → MPC Neural Renderer** откройте настройки, включите **Use Direct3D 11** и выберите обработку:
    - **Enable neural rendering**, **Intensity** — NR, интенсивность 0–200%.
-   - **NR stage** — где выполняется NR при апскейле: **Before upscaling** (на исходном кадре, быстрее всего), **After upscaling** (на увеличенном кадре) или **Before and after** (два прохода). Без апскейла NR всегда выполняется один раз на исходном кадре.
+   - **EchoStorm independent NR / compose at presentation** — независимый NR, включён по умолчанию. Модель считает уменьшенную добавку на отдельной очереди; она переносится по движению и накладывается на свежие реальные и сгенерированные кадры перед субтитрами. Автобюджет — 5 мс, рабочая ширина до 1920 пикселей. Для NR нужен также поставляемый `nvngx.dll_mpc_echo_nr.dll`; это наш адаптер, модель NVIDIA устанавливается отдельно.
+   - **NR stage** — при отключённом независимом NR выбирает, где выполняется NR при апскейле: **Before upscaling** (на исходном кадре, быстрее всего), **After upscaling** (на увеличенном кадре) или **Before and after** (два прохода). Без апскейла NR всегда выполняется один раз на исходном кадре.
    - **Upscaling** — Off / DLSS SR / FSR 3.1 / XeSS.
    - **Motion estimation** — **EchoStorm coarse-to-fine** (по умолчанию для новых настроек) или **Fast block matching**. Выбор общий для NR, апскейла и DLSS / FSR / XeSS FG; сохраняется по Apply. Сохранённый выбор Fast сохраняется: для перехода выберите EchoStorm и Apply. Базовый EchoStorm появился в `v0.1.3`; текущая ветка добавляет полный путь коррекции движения и защиты истории апскейлеров.
-   - **Frame generation** — DLSS MFG / FSR FG / XeSS FG; **Multiplier** — Off / 2x / 3x / 4x.
+   - **Frame generation** — EchoFG / DLSS MFG / FSR FG / XeSS FG; **Multiplier** — Off / 2x / 3x / 4x.
    - **Limit frame generation to monitor refresh rate** — ограничивать FG герцовкой монитора. По умолчанию выключено: выбранный множитель ограничивается возможностями провайдера. При включении возвращается прежнее автоматическое ограничение; настройка общая для DLSS / FSR / XeSS FG, сохраняется по Apply.
    - **Present DLSS / FSR generated frames from a dedicated thread** — показ сгенерированных кадров из отдельного потока с очередью пакетов вместо таймера в UI-потоке плеера. Меньше опозданий и потерянных реальных кадров; задержка — до одного интервала между кадрами.
 6. Нажмите **Apply**. Включите **Show statistics**, чтобы увидеть выбранные режимы, состояние обработки и причину отказа, если функция недоступна.
@@ -54,11 +55,15 @@
 
 ### Апскейл и генерация
 
-В текущей ветке полный путь EchoStorm включает коррекцию неоднозначных векторов на ровных и повторяющихся участках по движению окружения. Исправленные векторы используются NR, DLSS / FSR / XeSS SR и FG; в режиме Fast коррекция применяется перед FG. Отдельная маска ненадёжных областей передаётся DLSS SR, FSR (reactive) и XeSS (responsive pixel mask). При быстром движении и ненадёжной истории общий проход после апскейла смешивает результат модели с пространственным увеличением текущего кадра (Catmull–Rom). Это может уменьшать детализацию в движении; на доверенных участках результат модели сохраняется. Изменения проверяются GPU-тестами; устранение артефактов в Call of Duty ещё требует повторной проверки в игре.
+В текущей экспериментальной ветке переносится конвейер EchoStorm. **EchoFG** использует исходные `FlowEstimator → FlowFix → OwnSynth`: уменьшенный анализ для 4K, две гипотезы движения, обработку перекрытий и незаполненных областей, защиту HUD и зерна. Максимум — 4x в интерфейсе MPC. DLSS/FSR остаются альтернативами; к их результатам добавлена защита медленного переднего плана с учётом временной доли каждого кадра. XeSS показывает собственные промежуточные кадры внутри SDK, поэтому отдельный пост-FG проход к ним не применяется.
 
-Апскейл включается, только когда исходный кадр меньше разрешения монитора и области вывода: 1080p → 4K увеличивается, 4K → 4K — нет. NR получает полное исходное изображение. При выключенном или недоступном нейроапскейлере обычное масштабирование рендерера продолжает заполнять область просмотра с пропорциями, выбранными в плеере; уменьшение для размещения в окне также сохраняется. Исключение — экспериментальный режим FSR native AA для AMD-моста: он вызывает FSR и при 1:1.
+Точный GPU-детектор сравнивает весь RGB-кадр: одинаковые изображения с новыми timestamps не публикуются как новый пакет. Вычисления уже отправленного пакета при этом завершаются. Пейсинг сглаживает интервал и согласует фазы со стабильным измеренным refresh, когда кадры помещаются; множитель этим не уменьшается. Ограничение герцовкой остаётся отдельной выключенной по умолчанию настройкой.
 
-FSR 3.1 FG поддерживает **2x**. DLSS и XeSS используют доступный GPU / драйверу множитель в пределах выбранного. Только при включённом **Limit frame generation to monitor refresh rate** действует дополнительный предел дисплея: например, 60 FPS на 160 Гц ограничиваются 2x. Без этой галочки 4x сохраняется при разной нагрузке NR; монитор и система показа могут отображать меньше кадров, чем произведено. Для DLSS MFG нужны совместимая RTX, драйвер NVIDIA и включённое аппаратное планирование GPU (HAGS). Для XeSS FG используется D3D12 swap chain и XeLL; включайте его в оконном или безрамочном режиме с 8-битным SDR-выводом. Поддержку конкретного GPU проверяет SDK выбранного провайдера.
+Путь SR включает коррекцию неоднозначных векторов на ровных и повторяющихся участках по движению окружения. Исправленные векторы используются NR, DLSS / FSR / XeSS SR и FG; в режиме Fast коррекция применяется перед FG. Отдельная маска ненадёжных областей передаётся DLSS SR, FSR (reactive) и XeSS (responsive pixel mask). При быстром движении и ненадёжной истории общий проход после апскейла смешивает результат модели с пространственным увеличением текущего кадра (Catmull–Rom). Это может уменьшать детализацию в движении; на доверенных участках результат модели сохраняется. Изменения проверяются GPU-тестами; устранение артефактов в Call of Duty ещё требует повторной проверки в игре.
+
+Апскейл включается, только когда исходный кадр меньше разрешения монитора и области вывода: 1080p → 4K увеличивается, 4K → 4K — нет. Независимый NR получает proxy исходного изображения; прежний последовательный режим получает полное изображение. При выключенном или недоступном нейроапскейлере обычное масштабирование рендерера продолжает заполнять область просмотра с пропорциями, выбранными в плеере; уменьшение для размещения в окне также сохраняется. Исключение — экспериментальный режим FSR native AA для AMD-моста: он вызывает FSR и при 1:1.
+
+EchoFG поддерживает **2x / 3x / 4x** без библиотек FG от NVIDIA/AMD/Intel. FSR 3.1 FG поддерживает **2x**. DLSS и XeSS используют доступный GPU / драйверу множитель в пределах выбранного. Только при включённом **Limit frame generation to monitor refresh rate** действует дополнительный предел дисплея: например, 60 FPS на 160 Гц ограничиваются 2x. Без этой галочки 4x сохраняется при разной нагрузке NR; монитор и система показа могут отображать меньше кадров, чем произведено. Для DLSS MFG нужны совместимая RTX, драйвер NVIDIA и включённое аппаратное планирование GPU (HAGS). Для XeSS FG используется D3D12 swap chain и XeLL; включайте его в оконном или безрамочном режиме с 8-битным SDR-выводом. Поддержку конкретного GPU проверяет SDK выбранного провайдера.
 
 Генерация работает без апскейла. При перемотке, паузе и смене размера история сбрасывается. Входные кадры не накапливаются в очереди нейрообработки: пока GPU занят, используется последний готовый кадр. Очередь показа сгенерированных кадров ограничена отдельно; выделенный поток показа включён по умолчанию. Ошибка провайдера отображается в статистике, без автоматического переключения на другой алгоритм.
 
@@ -71,9 +76,11 @@ FSR 3.1 FG поддерживает **2x**. DLSS и XeSS используют д
 | RTX Video HDR → HDR | Тот же HDR-путь | Тот же HDR-путь | HDR-вывод не поддерживается |
 | HDR → SDR | После встроенного тонмаппинга | SDR-кадр после обработки | Только при 8-битном SDR-выводе |
 
-Я проверил релиз `v0.1.3` на своём сетапе: нейрорендеринг, апскейл, генерацию кадров, HDR, пиксельные шейдеры и переключение Fast / EchoStorm. Всё работает. Windows x64 сборка и GPU-регрессии также проходят CI.
+Я проверил релиз `v0.1.3` на своём сетапе: нейрорендеринг, апскейл, генерацию кадров, HDR, пиксельные шейдеры и переключение Fast / EchoStorm. Всё работает. Это относится к опубликованному релизу, а не к новому экспериментальному переносу EchoFG/NR.
 
-При включённой нейрообработке порядок такой: **RGB-преобразование и цветовые коррекции → pre-resize шейдеры → NR до апскейла (если выбран) → апскейл → NR после апскейла (если выбран) → восстановление HDR (при HDR-выводе) → DLSS/FSR FG → масштабирование для вывода, post-resize шейдеры и субтитры**. XeSS FG использует собственный путь презентации. Уже выполненные цветовые коррекции не повторяются при показе готовых кадров.
+При независимом NR базовый путь — **RGB → pre-resize шейдеры → SR → HDR → EchoFG / DLSS / FSR FG → масштабирование и post-resize шейдеры → NR-добавка → субтитры**. NR считает добавку параллельно; ожидание модели не должно удерживать базовые кадры. При XeSS FG композиция доступна на входном реальном кадре, а последующие промежуточные кадры создаёт SDK. Игровые глубина и двунаправленные поля LSFG недоступны: перенос NR-добавки использует собственное поле движения модели, поэтому LSFG-specific ghost guard без этих полей не активируется.
+
+При отключённом независимом NR порядок такой: **RGB-преобразование и цветовые коррекции → pre-resize шейдеры → NR до апскейла (если выбран) → апскейл → NR после апскейла (если выбран) → восстановление HDR (при HDR-выводе) → DLSS/FSR FG → масштабирование для вывода, post-resize шейдеры и субтитры**. XeSS FG использует собственный путь презентации. Уже выполненные цветовые коррекции не повторяются при показе готовых кадров.
 
 Оба прохода NR увеличивают нагрузку, особенно когда второй обрабатывает 4K. Без увеличения разрешения встроенный NR выполняется один раз независимо от NR stage.
 
@@ -132,9 +139,9 @@ Video neural rendering, DLSS / FSR / XeSS upscaling, and frame generation inside
 
 ### Features and requirements
 
-- **NR**: neural rendering with 0–200% intensity, before upscaling, after it, or in two passes.
+- **NR**: independent EchoStorm engine composing a delta onto fresh presented frames, with 0–200% intensity; legacy before/after-upscaling stages remain available with the independent path disabled.
 - **Upscaling**: DLSS SR, FSR 3.1, or XeSS, independently of NR and frame generation.
-- **Frame generation**: DLSS MFG, FSR FG, or XeSS FG, capped by GPU/driver capabilities, with an optional display refresh limit.
+- **Frame generation**: EchoFG (default for new settings), DLSS MFG, FSR FG, or XeSS FG, capped by GPU/driver capabilities, with an optional display refresh limit.
 - **Video**: 8/10-bit SDR, HDR sources, and RTX Video HDR; pre/post-resize HLSL shaders and hotkeys.
 
 Neural features require **Windows 10/11 x64**, **MPC-HC x64**, **Direct3D 11**, and compatible GPU/drivers. Neural processing uses D3D11/D3D12 on the same GPU. NVIDIA libraries are supplied separately; required AMD/Intel libraries and licenses are bundled. Each provider's SDK checks feature support. D3D9 remains available for ordinary rendering without neural processing.
@@ -166,10 +173,11 @@ The project started from wanting to try neural rendering in Nintendo Switch 2 ga
 4. In MPC-HC x64, open **Options → External Filters → Add Filter → MPC Neural Renderer → Prefer**. If the filter is missing, click **Browse** and select `nvngx.dll_MpcNeuralRenderer64.ax`.
 5. Open a video or capture device. Open the renderer settings through **Play → Filters → MPC Neural Renderer**, enable **Use Direct3D 11**, and choose the processing options:
    - **Enable neural rendering**, **Intensity** — NR with 0–200% intensity.
-   - **NR stage** — where NR runs when upscaling: **Before upscaling** (on the source frame, fastest), **After upscaling** (on the upscaled frame), or **Before and after** (two passes). Without upscaling, NR always runs once on the source frame.
+   - **EchoStorm independent NR / compose at presentation** — enabled by default. NR computes a reduced delta on a separate queue and warps it onto fresh real/generated frames before subtitles. Automatic budget: 5 ms; working width up to 1920 pixels. Keep the bundled `nvngx.dll_mpc_echo_nr.dll` adapter beside the renderer; install the NVIDIA model separately.
+   - **NR stage** — with independent NR disabled, where NR runs when upscaling: **Before upscaling** (on the source frame, fastest), **After upscaling** (on the upscaled frame), or **Before and after** (two passes). Without upscaling, NR always runs once on the source frame.
    - **Upscaling** — Off / DLSS SR / FSR 3.1 / XeSS.
    - **Motion estimation** — **EchoStorm coarse-to-fine** (default for new settings) or **Fast block matching**. Applies to NR, upscaling, and DLSS / FSR / XeSS FG; saved with Apply. An explicitly saved Fast choice is preserved; select EchoStorm and Apply to switch. Basic EchoStorm support shipped in `v0.1.3`; the current branch adds the full motion-repair and upscaler history-protection path.
-   - **Frame generation** — DLSS MFG / FSR FG / XeSS FG; **Multiplier** — Off / 2x / 3x / 4x.
+   - **Frame generation** — EchoFG / DLSS MFG / FSR FG / XeSS FG; **Multiplier** — Off / 2x / 3x / 4x.
    - **Limit frame generation to monitor refresh rate** — optional display refresh cap, off by default. When off, the selected multiplier is capped only by provider capabilities; when on, the previous automatic display cap applies. Shared by DLSS / FSR / XeSS FG and saved with Apply.
    - **Present DLSS / FSR generated frames from a dedicated thread** — presents generated frames from a dedicated thread with a queued schedule instead of a timer on the player's UI thread. Fewer late and dropped real frames, at up to one frame interval of extra latency.
 6. Click **Apply**. Enable **Show statistics** to see the selected modes, processing status, and the reason if a feature is unavailable.
@@ -178,11 +186,15 @@ Select the upscaler and frame generator independently: for example, FSR + XeSS F
 
 ### Upscaling and frame generation
 
-The current branch adds EchoStorm local-consensus repair for ambiguous vectors on flat and repeating patches. NR, DLSS / FSR / XeSS SR and FG share the repaired field; Fast applies repair before FG. A separate confidence mask reaches DLSS SR, FSR (reactive), and XeSS (responsive pixel mask). A shared post-upscale pass blends unreliable or fast-moving areas toward a spatial reconstruction of the current frame (Catmull–Rom), while preserving trusted model detail. This can reduce detail in motion. GPU tests cover the changes; resolving the Call of Duty artifacts still needs another in-game check.
+The current experimental branch ports the EchoStorm pipeline. **EchoFG** runs the original `FlowEstimator → FlowFix → OwnSynth`, including reduced 4K analysis, two motion hypotheses, occlusions, hole filling, HUD protection and grain matching; MPC exposes up to 4x. DLSS/FSR alternatives receive a foreground guard adapted to each generated fraction. XeSS intermediate frames remain inside its SDK and cannot receive this separate post-FG pass.
+
+An exact GPU comparison suppresses publication of duplicate-image batches even when their timestamps differ; already submitted processing still completes. Presentation intervals are smoothed and phases aligned to stable measured refresh where they fit, without lowering the multiplier. The optional monitor cap stays off by default.
+
+The SR path includes local-consensus repair for ambiguous vectors on flat and repeating patches. NR, DLSS / FSR / XeSS SR and FG share the repaired field; Fast applies repair before FG. A separate confidence mask reaches DLSS SR, FSR (reactive), and XeSS (responsive pixel mask). A shared post-upscale pass blends unreliable or fast-moving areas toward a spatial reconstruction of the current frame (Catmull–Rom), while preserving trusted model detail. This can reduce detail in motion. GPU tests cover the changes; resolving the Call of Duty artifacts still needs another in-game check.
 
 Upscaling runs only when the source frame is smaller than both the monitor resolution and the output area: 1080p → 4K is upscaled; 4K → 4K is not. NR receives the full source image. With neural upscaling disabled or unavailable, the renderer uses ordinary resizing to fill the viewport according to the player's aspect ratio setting; downscaling to fit the window remains available. Experimental FSR native AA for the AMD bridge is an exception: it also dispatches FSR at 1:1.
 
-FSR 3.1 FG supports **2x**. DLSS and XeSS use the GPU / driver-supported multiplier, up to the selected value. The display cap applies only with **Limit frame generation to monitor refresh rate** checked: for example, 60 FPS on a 160 Hz display is capped at 2x. With it off, 4x remains selected across NR load changes; the monitor/presentation system may show fewer frames than generated. DLSS MFG requires a compatible RTX GPU, an NVIDIA driver, and Hardware-Accelerated GPU Scheduling (HAGS). XeSS FG uses a D3D12 swap chain and XeLL; use windowed or borderless mode with 8-bit SDR output. The selected provider's SDK checks GPU support.
+EchoFG supports **2x / 3x / 4x** without vendor FG libraries. FSR 3.1 FG supports **2x**. DLSS and XeSS use the GPU / driver-supported multiplier, up to the selected value. The display cap applies only with **Limit frame generation to monitor refresh rate** checked: for example, 60 FPS on a 160 Hz display is capped at 2x. With it off, 4x remains selected across NR load changes; the monitor/presentation system may show fewer frames than generated. DLSS MFG requires a compatible RTX GPU, an NVIDIA driver, and Hardware-Accelerated GPU Scheduling (HAGS). XeSS FG uses a D3D12 swap chain and XeLL; use windowed or borderless mode with 8-bit SDR output. The selected provider's SDK checks GPU support.
 
 Frame generation works without upscaling. Seeking, pausing, and resizing reset the history. Input frames do not build up an inference queue: while the GPU is busy, the latest completed frame is used. Generated-frame presentation has its own bounded queue; dedicated-thread presentation is enabled by default. Provider errors appear in the statistics without automatically switching to another algorithm.
 
@@ -195,7 +207,9 @@ Frame generation works without upscaling. Seeking, pausing, and resizing reset t
 | RTX Video HDR → HDR | Same HDR path | Same HDR path | HDR output unsupported |
 | HDR → SDR | After built-in tone mapping | Processed SDR frame | Only with 8-bit SDR output |
 
-I tested release `v0.1.3` on my setup: neural rendering, upscaling, frame generation, HDR, pixel shaders, and switching between Fast / EchoStorm. Everything works. The Windows x64 build and GPU regressions also pass CI.
+I tested release `v0.1.3` on my setup: neural rendering, upscaling, frame generation, HDR, pixel shaders, and switching between Fast / EchoStorm. Everything works. This describes the published release, not the new experimental EchoFG/NR port.
+
+Independent NR runs alongside the base path: **RGB → pre-resize shaders → SR → HDR → EchoFG / DLSS / FSR FG → presentation scaling/post-resize shaders → NR delta → subtitles**. Model latency does not hold the base frames. With XeSS FG, composition is applied to the real input; the SDK creates intermediate frames afterward. Game depth and LSFG bidirectional flow are unavailable; NR delta warping uses the model motion field, so the LSFG-specific ghost guard is inactive without that flow. The legacy sequential order below applies when independent NR is disabled.
 
 With neural processing enabled, the order is: **RGB conversion and colour correction → pre-resize shaders → pre-upscale NR (if selected) → upscaling → post-upscale NR (if selected) → HDR reconstruction (for HDR output) → DLSS/FSR FG → output resizing, post-resize shaders, and subtitles**. XeSS FG uses its own presentation path. Completed frames do not receive the same colour corrections twice.
 

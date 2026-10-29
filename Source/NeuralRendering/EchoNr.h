@@ -16,7 +16,7 @@ public:
     void Submit(ID3D11Device* device,ID3D11DeviceContext* context,ID3D11Texture2D* frame,
                 const RECT& rect,long long timestamp,bool hdr,const Settings& settings);
     void Compose(ID3D11DeviceContext* context,ID3D11Texture2D* target,const RECT& viewport,
-                 long long timestamp,bool generated);
+                 long long timestamp,bool generated,int rotation=0,bool flip=false);
     std::wstring Status() const;
 };
 }

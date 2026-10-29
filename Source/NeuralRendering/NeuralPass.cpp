@@ -372,7 +372,7 @@ struct NeuralPass::Impl {
                     message << L" (after-upscaling pass: " << nrPostFailure << L")";
             }
         } else
-            message << L"NR: Off";
+            message << (options.echoPipeline ? L"NR stage: independent presentation composition" : L"NR: Off");
         message << L"\n" << processing::Name(options.upscaler) << L" upscaling: ";
         if (srUsable)
             message << width << L"x" << height << L" -> " << target.width << L"x" << target.height;

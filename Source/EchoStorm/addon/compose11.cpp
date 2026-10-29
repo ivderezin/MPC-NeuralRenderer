@@ -65,6 +65,7 @@ cbuffer Constants : register(b0) {
     float  white;         // the SDR white, in nits (HDR only)
     float  darkGuard;     // 0 off; else the picture value below which a pixel takes no positive change (fading in up to it)
     float  padA;
+    uint rotation; uint flip; uint2 transformPad;
     float4 viewport;      // where the frame is drawn in the buffer, in uv: x, y, w, h (0, 0, 1, 1: all of it). Outside it (the bars) nothing is changed
 };
 static const float3 kLuma = float3(0.299, 0.587, 0.114);
@@ -159,8 +160,12 @@ void CSCompose(uint3 id : SV_DispatchThreadID, uint3 gid : SV_GroupID, uint3 gt 
     if (id.x >= size.x || id.y >= size.y) return;
     const float4 frame = tFrame[id.xy];
     const float2 uv = (float2(id.xy) + 0.5) / float2(size);
-    const float2 uvF = (uv - viewport.xy) / viewport.zw;   // the same place in the frame's own uv (the delta, the flow and the motion are the frame's)
+    float2 uvF = (uv - viewport.xy) / viewport.zw;   // the same place in the frame's own uv (the delta, the flow and the motion are the frame's)
     const bool inFrame = all(uvF >= 0.0) && all(uvF <= 1.0);
+    if (rotation == 90u) uvF = float2(uvF.y, 1.0 - uvF.x);
+    else if (rotation == 180u) uvF = 1.0 - uvF;
+    else if (rotation == 270u) uvF = float2(1.0 - uvF.y, uvF.x);
+    if (flip != 0u) uvF.x = 1.0 - uvF.x;
     if (!inFrame && marker == 0u && (flags & 4u) == 0u && compare != 1u) { uOut[id.xy] = frame; return; }   // Lossless Scaling's bars: as they are (the feedback overlays below still draw there)
     const float3 fs = useTile ? gSdr[gt.y + 1][gt.x + 1] : Sdr(frame.rgb);
     bool replaced = false;   // a debug view or an overlay: written as it is, not as a change to the frame
@@ -255,9 +260,10 @@ struct Constants {
     uint32_t grainSeed; float grainSize; uint32_t hudCount; float hudFeather;
     float hud[6][4];
     uint32_t encoding; float white; float darkGuard; uint32_t pad;
+    uint32_t rotation, flip, transformPad[2];
     float viewport[4];
 };
-static_assert(offsetof(Constants, gamma) == 80 && offsetof(Constants, hud) == 112 && offsetof(Constants, encoding) == 208 && offsetof(Constants, viewport) == 224 && sizeof(Constants) == 240,
+static_assert(offsetof(Constants, gamma) == 80 && offsetof(Constants, hud) == 112 && offsetof(Constants, encoding) == 208 && offsetof(Constants, viewport) == 240 && sizeof(Constants) == 256,
               "Constants must match the shader's cbuffer");
 
 template <class T> void SafeRelease(T*& p) { if (p) { p->Release(); p = nullptr; } }
@@ -444,6 +450,7 @@ bool Compose11::Run(ID3D11DeviceContext* ctx, const Args& a) {
     c.shadows = a.shadows; c.highlights = a.highlights; c.grain = a.grain; c.grainSeed = a.grainSeed; c.grainSize = std::clamp(a.grainSize, 1.0f, 4.0f);
     c.hudCount = std::min(a.hudCount, 6u); c.hudFeather = a.hudFeather; memcpy(c.hud, a.hud, sizeof c.hud);
     c.darkGuard = std::clamp(a.darkGuard, 0.0f, 0.15f); c.encoding = a.encoding; c.white = a.whiteNits > 1.0f ? a.whiteNits : 200.0f;
+    c.rotation=a.rotation; c.flip=a.flip ? 1u : 0u;
     for (int i = 0; i < 4; ++i) c.viewport[i] = a.viewport[i];
     D3D11_MAPPED_SUBRESOURCE mapped{};
     if (SUCCEEDED(ctx->Map(m_constants, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) { memcpy(mapped.pData, &c, sizeof c); ctx->Unmap(m_constants, 0); }

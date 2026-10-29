@@ -13,18 +13,19 @@ using processing::Transition;
 using processing::CheckHr;
 struct EchoFrameGeneration::Impl {
     nr::OwnSynth synth;
-    nr::FlowEstimator estimate;
+    FlowEstimator estimate;
     nr::FlowFix repair;
     ComPtr<ID3D12Resource> before, motion, distrust, repaired;
     unsigned width=0,height=0,scale=1,slot=0,pending=0;
     bool hdr=false,haveBefore=false;
     std::string error;
+    ~Impl() { estimate.Shutdown(); }
     ComPtr<ID3D12Resource> Texture(ID3D12Device* device,unsigned w,unsigned h,DXGI_FORMAT format,D3D12_RESOURCE_STATES state) {
         D3D12_HEAP_PROPERTIES heap{}; heap.Type=D3D12_HEAP_TYPE_DEFAULT;
         heap.CreationNodeMask=heap.VisibleNodeMask=1;
         D3D12_RESOURCE_DESC desc{}; desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;
         desc.Width=w; desc.Height=h; desc.Format=format;
-        desc.MipLevels=desc.DepthOrArraySize=desc.SampleDesc.Count=1;
+        desc.MipLevels=1; desc.DepthOrArraySize=1; desc.SampleDesc.Count=1;
         if (state==D3D12_RESOURCE_STATE_UNORDERED_ACCESS) desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
         ComPtr<ID3D12Resource> result;
         CheckHr(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,state,nullptr,IID_PPV_ARGS(&result)),"Create EchoFG texture");
@@ -57,7 +58,7 @@ void EchoFrameGeneration::Dispatch(ID3D12GraphicsCommandList* list,ID3D12Resourc
     if (reset) { p.estimate.Forget(); p.haveBefore=false; }
     const auto format=color->GetDesc().Format;
     const unsigned encoding=p.hdr ? 2u : 0u;
-    const int slot=static_cast<int>(p.slot++%nr::FlowEstimator::kSlots);
+    const int slot=static_cast<int>(p.slot++%FlowEstimator::kSlots);
     p.estimate.ReadStats(slot);
     p.estimate.Record(list,slot,color,format,p.motion.Get(),p.distrust.Get(),0.f,encoding,203.f);
     Transition(list,p.motion.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
