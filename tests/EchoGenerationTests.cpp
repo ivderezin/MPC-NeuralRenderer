@@ -49,7 +49,7 @@ struct Gpu12 {
                                   const void* data=nullptr,unsigned bytesPerPixel=4) {
         D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_DEFAULT;heap.CreationNodeMask=heap.VisibleNodeMask=1;
         D3D12_RESOURCE_DESC d{};d.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;d.Width=w;d.Height=h;d.Format=format;
-        d.DepthOrArraySize=1; d.MipLevels=1; d.SampleDesc.Count=1;d.Flags=D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        d.DepthOrArraySize=1; d.MipLevels=1; d.SampleDesc.Count=1;d.Flags=format==DXGI_FORMAT_B8G8R8A8_UNORM ? D3D12_RESOURCE_FLAG_NONE : D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
         ComPtr<ID3D12Resource> r;
         CheckHr(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&d,data ? D3D12_RESOURCE_STATE_COPY_DEST : state,nullptr,IID_PPV_ARGS(&r)),"texture");
         if (data) {
@@ -65,7 +65,7 @@ struct Gpu12 {
         }
         return r;
     }
-    std::vector<unsigned char> Read(ID3D12Resource* r) {
+    std::vector<unsigned char> Read(ID3D12Resource* r,unsigned bytesPerPixel=4) {
         const auto d=r->GetDesc();D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};UINT64 bytes=0;
         device->GetCopyableFootprints(&d,0,1,0,&footprint,nullptr,nullptr,&bytes);
         auto read=Buffer(bytes,D3D12_HEAP_TYPE_READBACK,D3D12_RESOURCE_STATE_COPY_DEST);
@@ -73,9 +73,9 @@ struct Gpu12 {
         D3D12_TEXTURE_COPY_LOCATION a{},b{};a.pResource=read.Get();a.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;a.PlacedFootprint=footprint;
         b.pResource=r;b.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;list->CopyTextureRegion(&a,0,0,0,&b,nullptr);
         Transition(list.Get(),r,D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);Finish();
-        void* mapped=nullptr;CheckHr(read->Map(0,nullptr,&mapped),"read pixels");std::vector<unsigned char> result(static_cast<size_t>(d.Width)*d.Height*4);
-        for(UINT y=0;y<d.Height;++y)std::memcpy(result.data()+static_cast<size_t>(y)*d.Width*4,
-            static_cast<char*>(mapped)+footprint.Offset+static_cast<size_t>(y)*footprint.Footprint.RowPitch,static_cast<size_t>(d.Width)*4);
+        void* mapped=nullptr;CheckHr(read->Map(0,nullptr,&mapped),"read pixels");std::vector<unsigned char> result(static_cast<size_t>(d.Width)*d.Height*bytesPerPixel);
+        for(UINT y=0;y<d.Height;++y)std::memcpy(result.data()+static_cast<size_t>(y)*d.Width*bytesPerPixel,
+            static_cast<char*>(mapped)+footprint.Offset+static_cast<size_t>(y)*footprint.Footprint.RowPitch,static_cast<size_t>(d.Width)*bytesPerPixel);
         D3D12_RANGE none{0,0};read->Unmap(0,&none);return result;
     }
 };
@@ -120,6 +120,26 @@ int main() {
             ++motionSamples;
         }
         Require(motionError/motionSamples<1,"Vendor FG guidance must use final-frame backward motion in final-resolution pixels");
+        auto exported=gpu.Texture(w,h,DXGI_FORMAT_R16G16_FLOAT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        auto postMotion=gpu.Texture(w*2,h*2,DXGI_FORMAT_R16G16_FLOAT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        auto confidence=gpu.Texture(w,h,DXGI_FORMAT_R8_UNORM,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        guidance.WriteGuidance(gpu.list.Get(),exported.Get(),confidence.Get(),2.f);
+        guidance.WriteGuidance(gpu.list.Get(),postMotion.Get());gpu.Finish();
+        for(auto* resource:{exported.Get(),postMotion.Get(),confidence.Get()})
+            Transition(gpu.list.Get(),resource,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        const auto exportedPixels=gpu.Read(exported.Get());
+        const auto postPixels=gpu.Read(postMotion.Get());
+        const auto fastMask=gpu.Read(confidence.Get(),1);
+        const unsigned center=(h/2*w+w/2)*4,postCenter=(h*(w*2)+w)*4;
+        Require(std::abs(half(exportedPixels[center],exportedPixels[center+1])-8.f)<1,"Shared native motion must retain pixel units");
+        Require(std::abs(half(postPixels[postCenter],postPixels[postCenter+1])-16.f)<2,"After-upscale NR motion must scale to output pixels");
+        Require(fastMask[h/2*w+w/2]==255,"Native SR mask must retain fast-motion rejection");
+        for(auto* resource:{exported.Get(),postMotion.Get(),confidence.Get()})
+            Transition(gpu.list.Get(),resource,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        guidance.WriteGuidance(gpu.list.Get(),exported.Get(),confidence.Get(),0.f);gpu.Finish();
+        Transition(gpu.list.Get(),confidence.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        const auto matchMask=gpu.Read(confidence.Get(),1);
+        Require(matchMask[h/2*w+w/2]<64,"Matching confidence must remain independent of SR fast-motion rejection");
         double totalError=0;
         for(unsigned i=0;i<3;++i) {
             const auto pixels=gpu.Read(outputs[i]);
@@ -130,6 +150,14 @@ int main() {
             error/=n;totalError+=error;
             Require(error<24,"EchoFG must reconstruct the known camera translation at the requested temporal fraction");
         }
+        framegen::EchoFrameGeneration bgraGuide;
+        bgraGuide.Create(gpu.device.Get(),w,h,false,true,DXGI_FORMAT_B8G8R8A8_UNORM);
+        auto bgraBefore=gpu.Texture(w,h,DXGI_FORMAT_B8G8R8A8_UNORM,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,a.data());
+        auto bgraNow=gpu.Texture(w,h,DXGI_FORMAT_B8G8R8A8_UNORM,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,b.data());
+        bgraGuide.Dispatch(gpu.list.Get(),bgraBefore.Get(),{},0,true);gpu.Finish();
+        bgraGuide.Dispatch(gpu.list.Get(),bgraNow.Get(),{},0,false);gpu.Finish();
+        const auto bgraMotion=gpu.Read(bgraGuide.Motion());
+        Require(std::abs(half(bgraMotion[center],bgraMotion[center+1])-8.f)<1,"XeSS BGRA input must use native backward motion without format conversion errors");
         echo.Dispatch(gpu.list.Get(),current.Get(),outputs,3,true);gpu.Finish();Require(echo.Collect()==0,"EchoFG seek must reset both motion and synthesis history");
         std::vector<unsigned char> low(w*h*4,51),high(w*h*4,64),bad(w*h*4,255);
         for(unsigned i=3;i<low.size();i+=4) {low[i]=high[i]=bad[i]=255;}

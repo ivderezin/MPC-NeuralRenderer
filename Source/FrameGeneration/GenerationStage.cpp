@@ -45,31 +45,32 @@ void GenerationStage::Create(processing::FrameGenerator provider, ID3D12Device* 
         p.echo.Create(device,outWidth,outHeight,hdr);
         return;
     }
+    p.nativeEchoMotion=nativeEchoMotion;
+    if (nativeEchoMotion) {
+        p.guidance.Create(device,outWidth,outHeight,hdr,true);
+        // Vendor FG receives vectors at final colour resolution. Depth is still
+        // explicitly a flat fallback; capture provides no game depth.
+        D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_DEFAULT;heap.CreationNodeMask=heap.VisibleNodeMask=1;
+        D3D12_RESOURCE_DESC d{};d.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;d.Width=outWidth;d.Height=outHeight;
+        d.DepthOrArraySize=1;d.MipLevels=1;d.SampleDesc.Count=1;d.Format=DXGI_FORMAT_R32_FLOAT;
+        ngx::CheckHr(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&p.guideDepth)),"Create final-resolution FG depth");
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};UINT64 bytes=0;
+        device->GetCopyableFootprints(&d,0,1,0,&footprint,nullptr,nullptr,&bytes);
+        heap.Type=D3D12_HEAP_TYPE_UPLOAD;d={};d.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;d.Width=bytes;
+        d.Height=1;d.DepthOrArraySize=1;d.MipLevels=1;d.SampleDesc.Count=1;d.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ngx::CheckHr(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&p.depthUpload)),"Create FG depth initialization");
+        void* data=nullptr;const D3D12_RANGE empty{0,0};
+        ngx::CheckHr(p.depthUpload->Map(0,&empty,&data),"Initialize FG depth");
+        std::memset(data,0,static_cast<size_t>(bytes));p.depthUpload->Unmap(0,nullptr);
+        D3D12_TEXTURE_COPY_LOCATION dst{},src{};dst.pResource=p.guideDepth.Get();dst.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        src.pResource=p.depthUpload.Get();src.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;src.PlacedFootprint=footprint;
+        list->CopyTextureRegion(&dst,0,0,0,&src,nullptr);
+        ngx::Transition(list,p.guideDepth.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    }
+    if (nativeEchoMotion) { p.width=outWidth;p.height=outHeight; }
     if (provider == processing::FrameGenerator::Dlss) {
         p.guard.Create(device,outWidth,outHeight,hdr);
-        p.nativeEchoMotion=nativeEchoMotion;
-        if (nativeEchoMotion) {
-            p.guidance.Create(device,outWidth,outHeight,hdr,true);
-            // DLSS now receives vectors at final colour resolution. Depth is still
-            // explicitly a flat fallback; capture provides no game depth.
-            D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_DEFAULT;heap.CreationNodeMask=heap.VisibleNodeMask=1;
-            D3D12_RESOURCE_DESC d{};d.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;d.Width=outWidth;d.Height=outHeight;
-            d.DepthOrArraySize=1;d.MipLevels=1;d.SampleDesc.Count=1;d.Format=DXGI_FORMAT_R32_FLOAT;
-            ngx::CheckHr(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&p.guideDepth)),"Create final-resolution FG depth");
-            D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};UINT64 bytes=0;
-            device->GetCopyableFootprints(&d,0,1,0,&footprint,nullptr,nullptr,&bytes);
-            heap.Type=D3D12_HEAP_TYPE_UPLOAD;d={};d.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;d.Width=bytes;
-            d.Height=1;d.DepthOrArraySize=1;d.MipLevels=1;d.SampleDesc.Count=1;d.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-            ngx::CheckHr(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&p.depthUpload)),"Create FG depth initialization");
-            void* data=nullptr;const D3D12_RANGE empty{0,0};
-            ngx::CheckHr(p.depthUpload->Map(0,&empty,&data),"Initialize FG depth");
-            std::memset(data,0,static_cast<size_t>(bytes));p.depthUpload->Unmap(0,nullptr);
-            D3D12_TEXTURE_COPY_LOCATION dst{},src{};dst.pResource=p.guideDepth.Get();dst.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-            src.pResource=p.depthUpload.Get();src.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;src.PlacedFootprint=footprint;
-            list->CopyTextureRegion(&dst,0,0,0,&src,nullptr);
-            ngx::Transition(list,p.guideDepth.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        }
-        p.dlss.Create(device, list, nativeEchoMotion ? outWidth : width, nativeEchoMotion ? outHeight : height, outWidth, outHeight, hdr);
+        p.dlss.Create(device,list,p.width,p.height,outWidth,outHeight,hdr);
         return;
     }
     if (provider != processing::FrameGenerator::Fsr)
@@ -80,7 +81,7 @@ void GenerationStage::Create(processing::FrameGenerator provider, ID3D12Device* 
     create.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION;
     create.flags = FFX_FRAMEGENERATION_ENABLE_DEPTH_INVERTED | (hdr ? FFX_FRAMEGENERATION_ENABLE_HIGH_DYNAMIC_RANGE : 0);
     create.displaySize = {outWidth, outHeight};
-    create.maxRenderSize = {width, height};
+    create.maxRenderSize = {p.width, p.height};
     create.backBufferFormat = hdr ? FFX_API_SURFACE_FORMAT_R10G10B10A2_UNORM : FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM;
     ffxCreateBackendDX12Desc backend{};
     backend.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12;
@@ -108,12 +109,12 @@ void GenerationStage::Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* 
         p.echo.Dispatch(list,color,output,count,reset);
         return;
     }
+    if (p.nativeEchoMotion) {
+        p.guidance.Dispatch(list,color,{},0,reset);
+        motion=p.guidance.Motion();depth=p.guideDepth.Get();
+        ngx::Transition(list,motion,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    }
     if (p.provider == processing::FrameGenerator::Dlss) {
-        if (p.nativeEchoMotion) {
-            p.guidance.Dispatch(list,color,{},0,reset);
-            motion=p.guidance.Motion();depth=p.guideDepth.Get();
-            ngx::Transition(list,motion,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        }
         const auto result=p.dlss.Evaluate(list, color, depth, motion, output, count, reset);
         if (result==NVSDK_NGX_Result_Success) p.guard.Dispatch(list,color,motion,output,count,reset);
         if (p.nativeEchoMotion) ngx::Transition(list,motion,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -158,6 +159,7 @@ void GenerationStage::Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* 
     generate.minMaxLuminance[1] = p.hdr ? 10000.0f : 80.0f;
     processing::FsrApi::Check(p.fsr.dispatch(&p.context, &generate.header), "Dispatch FSR frame generation");
     p.guard.Dispatch(list,color,motion,output,1,reset);
+    if (p.nativeEchoMotion) ngx::Transition(list,motion,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 }
 unsigned GenerationStage::Collect() {
     if (impl_->provider == processing::FrameGenerator::EchoStorm) return impl_->echo.Collect();

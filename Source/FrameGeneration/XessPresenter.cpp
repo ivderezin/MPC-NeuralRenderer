@@ -6,7 +6,7 @@
 #include "../Processing/RuntimeLibrary.h"
 #include "../Processing/ResourceBarrier.h"
 #include "../NeuralRendering/MotionShaders.h"
-#include "../NeuralRendering/MotionEstimator.h"
+#include "EchoFrameGeneration.h"
 #include <d3d11_4.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
@@ -97,7 +97,7 @@ struct XessPresenter::Impl {
     ComPtr<ID3D11Buffer> constants;
     SharedTexture scene, vectors, repairedVectors, depth, distrust;
     neural::MotionRepair motionRepair;
-    neural::MotionEstimator estimator;
+    EchoFrameGeneration estimator;
     bool echoMotion = false, echoReset = true, limitToDisplay = false;
     unsigned width = 0, height = 0, interpolations = 1, presentId = 0;
     unsigned long long lastToken = 0;
@@ -155,10 +155,10 @@ struct XessPresenter::Impl {
         scene.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_B8G8R8A8_UNORM, false);
         vectors.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_R16G16_FLOAT);
         repairedVectors.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_R16G16_FLOAT);
-        motionRepair.Initialize(device11.Get(), w, h);
+        if (!echoMotion) motionRepair.Initialize(device11.Get(), w, h);
         if (echoMotion) {
             distrust.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_R8_UNORM);
-            estimator.Initialize(device11.Get(), w, h);
+            estimator.Create(device12.Get(),w,h,false,true,DXGI_FORMAT_B8G8R8A8_UNORM);
             echoReset = true;
         }
         depth.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_R32_FLOAT);
@@ -284,10 +284,7 @@ struct XessPresenter::Impl {
         if (reset)
             context11->CopyResource(previous.Get(), scene.texture.Get());
         if (useFG) {
-            if (echoMotion) {
-                estimator.Dispatch(context11.Get(), scene.srv.Get(), vectors.uav.Get(), distrust.uav.Get(), reset || echoReset);
-                echoReset = false;
-            } else {
+            if (!echoMotion) {
                 const UINT params[] = {width, height, 0, 0, reset ? 1u : 0u, 0, 0, 0};
                 context11->UpdateSubresource(constants.Get(), 0, nullptr, params, 0, 0);
                 ID3D11Buffer* cb[] = {constants.Get()};
@@ -306,7 +303,7 @@ struct XessPresenter::Impl {
                 context11->CSSetConstantBuffers(0, 1, cb);
                 context11->CSSetShader(nullptr, nullptr, 0);
             }
-            motionRepair.Dispatch(context11.Get(), previousView.Get(), scene.srv.Get(),
+            if (!echoMotion) motionRepair.Dispatch(context11.Get(), previousView.Get(), scene.srv.Get(),
                 vectors.srv.Get(), distrust.srv.Get(), repairedVectors.uav.Get());
         } else echoReset = true;
 
@@ -325,6 +322,15 @@ struct XessPresenter::Impl {
         Transition(list.Get(), buffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
         Transition(list.Get(), scene.resource.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
         if (useFG) {
+            if (echoMotion) {
+                Transition(list.Get(),scene.resource.Get(),D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                Transition(list.Get(),repairedVectors.resource.Get(),D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                estimator.Dispatch(list.Get(),scene.resource.Get(),{},0,reset || echoReset);
+                estimator.WriteGuidance(list.Get(),repairedVectors.resource.Get());
+                echoReset=false;
+                Transition(list.Get(),scene.resource.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COMMON);
+                Transition(list.Get(),repairedVectors.resource.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COMMON);
+            }
             for (auto* resource : {repairedVectors.resource.Get(), depth.resource.Get()})
                 Transition(list.Get(), resource, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
             xefg_swapchain_d3d12_resource_data_t data{};
@@ -388,7 +394,7 @@ HRESULT XessPresenter::Create(ID3D11Device* device, ID3D11DeviceContext* context
                              directory);
         CheckHr(instance->swapchain.CopyTo(swapchain), "Return XeSS swap chain");
         status_ =
-            L"XeSS FG: up to " + std::to_wstring(instance->interpolations + 1) + L"x (" + std::wstring(echoMotion ? L"EchoStorm motion" : L"fast motion") + L", zero depth)";
+            L"XeSS FG: up to " + std::to_wstring(instance->interpolations + 1) + L"x (" + std::wstring(echoMotion ? L"native D3D12 EchoStorm motion" : L"fast motion") + L", zero depth)";
         impl_ = std::move(instance);
         return S_OK;
     } catch (const std::exception& error) {
@@ -433,7 +439,7 @@ HRESULT XessPresenter::Present(unsigned syncInterval, bool running, unsigned lon
         if (!impl_->failed) {
             status_ = impl_->displayLimited ? L"XeSS FG: bypass (display refresh limit)"
                 : L"XeSS FG: up to " + std::to_wstring(impl_->interpolations + 1)
-                    + L"x, latest present " + std::to_wstring(impl_->lastPresented) + L" frames (" + std::wstring(impl_->echoMotion ? L"EchoStorm motion" : L"fast motion") + L", zero depth)";
+                    + L"x, latest present " + std::to_wstring(impl_->lastPresented) + L" frames (" + std::wstring(impl_->echoMotion ? L"native D3D12 EchoStorm motion" : L"fast motion") + L", zero depth)";
         }
         return result;
     } catch (const std::exception& error) {

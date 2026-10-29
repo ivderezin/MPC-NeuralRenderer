@@ -4,7 +4,7 @@
 #include "FrameHistory.h"
 #include "AsyncOutput.h"
 #include "MotionShaders.h"
-#include "MotionEstimator.h"
+#include "../FrameGeneration/EchoFrameGeneration.h"
 #include "MotionRepair.h"
 #include "../FrameGeneration/FrameContentProbe.h"
 #include "../FrameGeneration/ExactInputRepeat.h"
@@ -231,7 +231,7 @@ struct NeuralPass::Impl {
     ComPtr<ID3D11ComputeShader> prepare, motion, scaleMotion;
     ComPtr<ID3D11Buffer> constants, scaleConstants;
     SharedTexture color, output, vectors, depth, distrust;
-    MotionEstimator echoMotion;
+    framegen::EchoFrameGeneration echoMotion;
     neural::MotionRepair motionRepair;
     SharedTexture repairedVectors, upscaleDistrust;
     FrameHistory history;
@@ -356,7 +356,7 @@ struct NeuralPass::Impl {
     }
     std::wstring Status() const {
         std::wostringstream message;
-        message << L"Motion: " << neural::Name(options.motionMethod) << L"\n";
+        message << L"Motion: " << neural::Name(options.motionMethod) << (options.motionMethod==MotionMethod::EchoStorm ? L" (native D3D12)" : L"") << L"\n";
         if (hdr) message << L"HDR: PQ / BT.2020, SDR proxy + linear-light residual, 10-bit output\n";
         if (options.enabled) {
             if (!nrUsable && !nrPostUsable)
@@ -504,12 +504,12 @@ struct NeuralPass::Impl {
         vectors.Create(device, device12.Get(), width, height, DXGI_FORMAT_R16G16_FLOAT);
         if (options.motionMethod == MotionMethod::EchoStorm || options.ManualGeneration()) {
             repairedVectors.Create(device, device12.Get(), width, height, DXGI_FORMAT_R16G16_FLOAT);
-            motionRepair.Initialize(device, width, height);
+            if (options.motionMethod == MotionMethod::Fast) motionRepair.Initialize(device, width, height);
         }
         if (options.motionMethod == MotionMethod::EchoStorm) {
             distrust.Create(device, device12.Get(), width, height, DXGI_FORMAT_R8_UNORM);
             upscaleDistrust.Create(device, device12.Get(), width, height, DXGI_FORMAT_R8_UNORM);
-            echoMotion.Initialize(device, width, height);
+            echoMotion.Create(device12.Get(), width, height, false, true);
         }
         depth.Create(device, device12.Get(), width, height, DXGI_FORMAT_R32_FLOAT);
         color.texture->GetDesc(&desc);
@@ -857,9 +857,7 @@ struct NeuralPass::Impl {
         context11->CSSetUnorderedAccessViews(0, 1, target, nullptr);
         if (reset)
             context11->CopyResource(previous.Get(), color.texture.Get());
-        if (options.motionMethod == MotionMethod::EchoStorm) {
-            echoMotion.Dispatch(context11.Get(), color.srv.Get(), vectors.uav.Get(), distrust.uav.Get(), reset);
-        } else {
+        if (options.motionMethod == MotionMethod::Fast) {
             input[0] = color.srv.Get();
             input[1] = previousView.Get();
             target[0] = vectors.uav.Get();
@@ -876,12 +874,12 @@ struct NeuralPass::Impl {
             context11->CSSetShader(nullptr, nullptr, 0);
         }
         // Resolve flat/repeating patches before any temporal consumer uses the field.
-        if (repairedVectors.resource)
+        if (repairedVectors.resource && options.motionMethod == MotionMethod::Fast)
             motionRepair.Dispatch(context11.Get(), previousView.Get(), color.srv.Get(),
                 vectors.srv.Get(), distrust.srv.Get(), repairedVectors.uav.Get(), upscaleDistrust.uav.Get(),
                 srUsable ? static_cast<float>(width) * (this->target.width == width && this->target.height == height ? .001f : .0005f) : 0.f);
         auto& temporalVectors = options.motionMethod == MotionMethod::EchoStorm ? repairedVectors : vectors;
-        if (nrPostUsable && srUsable) {
+        if (nrPostUsable && srUsable && options.motionMethod == MotionMethod::Fast) {
             // The after-upscaling NR pass needs motion at the output resolution.
             const UINT scaleData[] = {width, height, this->target.width, this->target.height};
             context11->UpdateSubresource(scaleConstants.Get(), 0, nullptr, scaleData, 0, 0);
@@ -910,6 +908,11 @@ struct NeuralPass::Impl {
         Check(queue->Wait(fence12.Get(), ready), "D3D12 wait");
         Transition(true);
         list->EndQuery(timingQueries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
+        if (options.motionMethod == MotionMethod::EchoStorm && (nrUsable || nrPostUsable || srUsable)) {
+            echoMotion.Dispatch(list.Get(),color.resource.Get(),{},0,reset);
+            const float fastMotion=srUsable ? static_cast<float>(width)*(this->target.width==width && this->target.height==height ? .001f : .0005f) : 0.f;
+            echoMotion.WriteGuidance(list.Get(),repairedVectors.resource.Get(),upscaleDistrust.resource.Get(),fastMotion);
+        }
         ID3D12Resource* finalColor = color.resource.Get();
         pendingReal = color.texture.Get();
         pendingScaled = false;
@@ -961,9 +964,9 @@ struct NeuralPass::Impl {
             postActive = true;
             ngx::Transition(list.Get(), postOutput.resource.Get(), D3D12_RESOURCE_STATE_COMMON,
                             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            for (auto* resource : {postVectors.resource.Get(), postDepth.resource.Get()})
-                ngx::Transition(list.Get(), resource, D3D12_RESOURCE_STATE_COMMON,
-                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            ngx::Transition(list.Get(),postVectors.resource.Get(),D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            if (options.motionMethod == MotionMethod::EchoStorm) echoMotion.WriteGuidance(list.Get(),postVectors.resource.Get());
+            ngx::Transition(list.Get(),postDepth.resource.Get(),D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             const auto result = EvaluateNr(nrPost, scaled.resource.Get(), postOutput.resource.Get(),
                                            postVectors.resource.Get(), postDepth.resource.Get(), reset);
             if (result == NVSDK_NGX_Result_Success) {
