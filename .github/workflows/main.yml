@@ -34,6 +34,8 @@ jobs:
             _bin/Filter_x64/*.md
             _bin/Filter_x64/LICENSE.txt
             _bin/Filter_x64/docs/images/*.jpg
+            _bin/Filter_x64/docs/dlss-fg-investigation.md
+            _bin/Filter_x64/tools/replay/Replay-README.md
           if-no-files-found: error
       - name: Upload small update for existing installations
         uses: actions/upload-artifact@v7
@@ -46,4 +48,6 @@ jobs:
             _bin/Filter_x64/*LICENSE*
             _bin/Filter_x64/README.md
             _bin/Filter_x64/Replay-README.md
+            _bin/Filter_x64/docs/dlss-fg-investigation.md
+            _bin/Filter_x64/tools/replay/Replay-README.md
           if-no-files-found: error

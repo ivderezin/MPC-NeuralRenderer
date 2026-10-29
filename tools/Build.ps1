@@ -22,6 +22,10 @@ Copy-Item (Join-Path $root 'deps/vendors/licenses/*') $output
 $imageOutput = Join-Path $output 'docs/images'
 New-Item -ItemType Directory -Force $imageOutput | Out-Null
 Copy-Item (Join-Path $root 'docs/images/*.jpg') $imageOutput
+Copy-Item (Join-Path $root 'docs/dlss-fg-investigation.md') (Join-Path $output 'docs')
+$replayDocs = Join-Path $output 'tools/replay'
+New-Item -ItemType Directory -Force $replayDocs | Out-Null
+Copy-Item (Join-Path $root 'tools/replay/Replay-README.md') $replayDocs
 Copy-Item (Join-Path $root 'Source/NeuralRendering/EchoStorm-LICENSE.txt') $output
 # The independent NR path loads its own adapter dynamically. Validate the packaged
 # binary and its ABI on the runner, even though the NVIDIA model is not installed.
