@@ -103,6 +103,11 @@ void EchoNr::Submit(ID3D11Device* device,ID3D11DeviceContext* context,ID3D11Text
             }
             p.bridge.ShareMotion(true); p.bridgeReady=true;
         }
+        if (p.engine.CheckStuck()) { p.Log("model stopped responding; restart MPC-HC"); p.state.store(2); return; }
+        // The native worker reads encoding and parameters while recording. Do not
+        // mutate them until Busy's mutex establishes completion of that work.
+        if (p.engine.Busy()) return;
+        if (p.engine.IsFailed()) { p.Log(p.engine.Stats().lastError); p.state.store(2); return; }
         if (p.haveTimestamp && timestamp==p.lastTimestamp) return;
         if (p.haveTimestamp && (timestamp<p.lastTimestamp || timestamp-p.lastTimestamp>5000000)) p.reset=true;
         const auto w=static_cast<unsigned>(rect.right-rect.left),h=static_cast<unsigned>(rect.bottom-rect.top);
