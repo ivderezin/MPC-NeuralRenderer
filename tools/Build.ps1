@@ -9,7 +9,12 @@ if (!(Test-Path (Join-Path $root 'deps/ngx/lib/nvsdk_ngx_s.lib')) -or !(Test-Pat
 & (Join-Path $PSScriptRoot 'Fetch-VendorSdks.ps1')
 & $msbuild (Join-Path $root 'MpcVideoRenderer.sln') /m /nologo /p:Configuration=Release /p:Platform=x64
 if ($LASTEXITCODE -ne 0) { throw 'Renderer build failed.' }
+& $msbuild (Join-Path $root 'tools/replay/DlssFgReplay.vcxproj') /m /nologo /p:Configuration=Release /p:Platform=x64
+if ($LASTEXITCODE -ne 0) { throw 'DLSS FG replay build failed.' }
 $output = Join-Path $root '_bin/Filter_x64'
+& (Join-Path $output 'DLSS-FG-Replay.exe') --self-test
+if ($LASTEXITCODE -ne 0) { throw 'DLSS FG replay image I/O and diagnostic checks failed.' }
+Copy-Item (Join-Path $root 'tools/replay/Replay-README.md') $output
 Copy-Item (Join-Path $root 'README.md'), (Join-Path $root 'LICENSE.txt') $output
 Copy-Item (Join-Path $root 'distrib/Install_MPCVR_64.cmd'), (Join-Path $root 'distrib/Uninstall_MPCVR_64.cmd') $output
 Copy-Item (Join-Path $root 'deps/vendors/runtime/*.dll') $output

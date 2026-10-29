@@ -81,6 +81,7 @@ void GenerationStage::Create(processing::FrameGenerator provider, ID3D12Device* 
     if (provider == processing::FrameGenerator::Dlss) {
         p.guard.Create(device,outWidth,outHeight,hdr);
         p.dlss.Create(device,list,p.width,p.height,outWidth,outHeight,hdr);
+        p.dlss.SetGuidanceInfo(nativeEchoMotion ? "native_echo_d3d12_final_frame" : "fast_d3d11_repaired");
         return;
     }
     if (provider != processing::FrameGenerator::Fsr)

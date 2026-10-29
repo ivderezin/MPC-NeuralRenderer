@@ -62,6 +62,7 @@ NVSDK_NGX_Result DlssMultiFrameGeneration::Evaluate(ID3D12GraphicsCommandList* l
     NVSDK_NGX_DLSSG_Opt_Eval_Params options{};
     options.multiFrameCount = count;
     options.colorBuffersHDR = hdr_;
+    options.motionVectorsDilated = motionVectorsDilated_;
     options.mvecScale[0] = 1.0f / inputWidth_; options.mvecScale[1] = 1.0f / inputHeight_;
     options.cameraUp[1] = options.cameraRight[0] = options.cameraFwd[2] = 1;
     options.cameraNear = DlssCaptureCamera::Near; options.cameraFar = DlssCaptureCamera::Far; options.cameraFOV = 1.04719755f;
@@ -81,7 +82,7 @@ NVSDK_NGX_Result DlssMultiFrameGeneration::Evaluate(ID3D12GraphicsCommandList* l
     if(capture_.Before(list,color,depth,motion,frameId_,reset,runtimeStatus_)) {
         try {
             std::ostringstream text;text.precision(std::numeric_limits<float>::max_digits10);
-            text<<"input_size="<<inputWidth_<<'x'<<inputHeight_<<"\noutput_size="<<outputWidth_<<'x'<<outputHeight_
+            text<<"guidance_source="<<guidanceInfo_<<"\ninput_size="<<inputWidth_<<'x'<<inputHeight_<<"\noutput_size="<<outputWidth_<<'x'<<outputHeight_
                 <<"\nmvec_scale="<<options.mvecScale[0]<<','<<options.mvecScale[1]<<"\nreset="<<reset
                 <<"\ndepth_inverted="<<options.depthInverted<<"\northo="<<options.orthoProjection<<"\ncamera_motion_included="<<options.cameraMotionIncluded
                 <<"\nmvec_dilated="<<options.motionVectorsDilated<<"\nmvec_invalid="<<options.motionVectorsInvalidValue<<"\nnot_rendering_game_frames="<<options.notRenderingGameFrames
