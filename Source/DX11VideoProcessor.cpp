@@ -4561,7 +4561,8 @@ void CDX11VideoProcessor::Configure(const Settings_t& config)
 	if (previousStage.echoPipeline) previousStage.enabled=false;
 	if (previousProcessing.echoPipeline!=m_processingSettings.echoPipeline || !m_processingSettings.enabled) m_echoNr.Reset();
 	m_neuralPass.Configure(stageSettings);
-	if (stageSettings!=previousStage) m_neuralPass.ClearHistory();
+	auto historySettings=stageSettings; historySettings.dlssFgGuard=previousStage.dlssFgGuard;
+	if (historySettings!=previousStage) m_neuralPass.ClearHistory();
 	m_xessPresenter.ClearHistory();
 	const bool changeNeural = neuralWasEnabled != m_neuralPass.Enabled();
 	bool changeWindow            = changePresenter;

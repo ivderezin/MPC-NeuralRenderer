@@ -22,6 +22,7 @@ struct Settings {
     processing::Upscaler upscaler = processing::Upscaler::Dlss;
     processing::FrameGenerator frameGenerator = processing::FrameGenerator::EchoStorm;
     bool echoPipeline = true;
+    bool dlssFgGuard = true; // Output guard; off exposes SDK-generated frames for comparison.
     void ToggleUpscaling(processing::Upscaler& previous) {
         if (upscaler != processing::Upscaler::Off) {
             previous = upscaler;

@@ -40,3 +40,5 @@ WARP не выполняет модель NVIDIA и не доказывает у
 - [MIT license EchoStorm](../Source/EchoStorm/EchoStorm-LICENSE.txt)
 
 DLSS FG follow-up: the capture fallback now uses an internally consistent reversed-depth orthographic projection/inverse and a finite constant plane at depth 0.5, instead of identity projection matrices plus zero depth. This is not game geometry and does not establish the cause of the reported artifacts. FSR, XeSS and EchoFG are unchanged by this adjustment. Statistics enumerate loaded DLSS-G module paths and file versions; an unidentified NGX alias is reported explicitly.
+
+DLSS post-FG isolation: `DLSS FG: protect slow foreground (off = SDK output)` defaults on. Off skips writes to generated surfaces while keeping the guard endpoint history current. Applying only this toggle preserves the DLSS feature and temporal history. Other providers and guards are unchanged. This permits direct comparison of SDK results before/after this specific adaptation. The user clarified that EchoDLSS does not use NVIDIA FG, so its clean result is not a working NVIDIA-FG reference implementation.

@@ -55,6 +55,8 @@
 
 ### Апскейл и генерация
 
+**DLSS FG: protect slow foreground (off = SDK output)** включён по умолчанию. Снимите галочку и нажмите Apply для сравнения кадров NVIDIA до нашего post-FG прохода защиты переднего плана. Остальные защиты сохранены; FSR/EchoFG/XeSS не затрагиваются. При изменении только этой галочки экземпляр DLSS и его история сохраняются. Состояние видно в статистике; сам переключатель не означает исправления артефактов.
+
 В режиме **EchoStorm coarse-to-fine** оценка движения во всех рабочих путях теперь выполняется исходным D3D12-оценщиком: последовательный NR, DLSS/FSR/XeSS SR, EchoFG и DLSS/FSR/XeSS FG. У NR/SR история относится к исходным кадрам, у FG — к окончательным кадрам после обработки. Маски доверия, защита истории и масштабирование векторов для NR после апскейла сохранены. Независимый NR уже использовал этот D3D12-оценщик. **Fast block matching** остаётся отдельным вариантом для сравнения; D3D11-адаптация EchoStorm больше не вызывается рабочим конвейером.
 
 Проверка текущей ветки на моём сетапе: EchoFG без independent compose работает хорошо. В DLSS FG и при independent compose были артефакты; новый фикс ещё требует повторной проверки. Для DLSS FG при выбранном EchoStorm теперь используется исходный D3D12-оценщик по окончательным кадрам после NR/SR, с векторами в выходном разрешении. Independent compose проверяет яркость proxy, возраст и границы проекции, отбрасывая неподтверждённую NR-добавку. Существующие guards сохранены.
@@ -192,6 +194,8 @@ Select the upscaler and frame generator independently: for example, FSR + XeSS F
 
 ### Upscaling and frame generation
 
+**DLSS FG: protect slow foreground (off = SDK output)** is on by default. Disable it and Apply to compare the NVIDIA-generated pixels before our post-FG foreground guard. Other guards remain active; FSR/EchoFG/XeSS are unaffected. The toggle keeps the DLSS feature and frame history alive, and statistics report its state. It is a diagnostic comparison, not a claim of resolved artifacts.
+
 **EchoStorm coarse-to-fine** now uses the original D3D12 estimator throughout the active pipeline: sequential NR, DLSS/FSR/XeSS SR, EchoFG and DLSS/FSR/XeSS FG. NR/SR keep input-frame history; FG keeps final-frame history after processing. Confidence masks, history protection and post-upscale NR vector scaling are retained. Independent NR already used this native estimator. **Fast block matching** remains a separate comparison mode; the D3D11 EchoStorm adaptation is no longer invoked by the active pipeline.
 
 Current-branch testing on my setup: EchoFG works well with independent compose disabled. DLSS FG and independent compose showed artifacts; the new fix still needs retesting. With EchoStorm selected, DLSS FG now uses the original D3D12 estimator on the final post-NR/SR frame pair, with output-resolution vectors. Independent compose validates proxy-luma agreement, age and image bounds before applying the projected NR delta. Existing guards remain active.
@@ -275,3 +279,5 @@ This prepares inputs for an external mod; MPC-HC compatibility is unverified. AM
 `Source/Upscaling` contains upscalers; `Source/FrameGeneration` contains generators and presentation; `Source/Processing` contains provider selection, library loading, and color conversion; `Source/NeuralRendering` contains NR, history, and processing coordination. Everything runs inside the player process.
 
 Source provenance and licenses: [docs/upstream.md](https://github.com/ivderezin/MPC-NeuralRenderer/blob/main/docs/upstream.md). Original documentation: [docs/upstream-readme.md](https://github.com/ivderezin/MPC-NeuralRenderer/blob/main/docs/upstream-readme.md).
+
+The **MPC-NeuralRenderer-Update-x64** Actions artifact is a small update for an existing installation. Close MPC-HC and replace the files in its existing renderer folder; the already installed vendor runtimes are required. Fresh installations should use the complete **MPC-NeuralRenderer-Windows-x64** artifact.

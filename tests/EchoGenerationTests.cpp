@@ -169,6 +169,10 @@ int main() {
         guard.Dispatch(gpu.list.Get(),lo.Get(),motion.Get(),outputs,0,true);gpu.Finish();
         for(unsigned i=0;i<3;++i)generated[i]=gpu.Texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,bad.data());
         for(unsigned i=0;i<3;++i)outputs[i]=generated[i].Get();
+        // Bypass must preserve the SDK pixels while advancing the guard history.
+        guard.Dispatch(gpu.list.Get(),lo.Get(),motion.Get(),outputs,0,false);gpu.Finish();
+        const auto bypass=gpu.Read(outputs[0]);
+        Require(bypass[(32*w+64)*4]==255,"Disabling the output guard must preserve SDK pixels");
         guard.Dispatch(gpu.list.Get(),hi.Get(),motion.Get(),outputs,3,false);gpu.Finish();
         for(unsigned i=0;i<3;++i) {
             const auto pixels=gpu.Read(outputs[i]);const float expected=51.f+13.f*static_cast<float>(i+1)/4.f;

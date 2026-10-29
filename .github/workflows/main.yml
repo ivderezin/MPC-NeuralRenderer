@@ -34,3 +34,13 @@ jobs:
             _bin/Filter_x64/LICENSE.txt
             _bin/Filter_x64/docs/images/*.jpg
           if-no-files-found: error
+      - name: Upload small update for existing installations
+        uses: actions/upload-artifact@v7
+        with:
+          name: MPC-NeuralRenderer-Update-x64
+          path: |
+            _bin/Filter_x64/*.ax
+            _bin/Filter_x64/nvngx.dll_mpc_echo_nr.dll
+            _bin/Filter_x64/*LICENSE*
+            _bin/Filter_x64/README.md
+          if-no-files-found: error

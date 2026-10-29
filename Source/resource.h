@@ -169,6 +169,7 @@
 #define IDC_MOTION_METHOD               1083
 #define IDC_FG_LIMIT_DISPLAY            1084
 #define IDC_ECHO_PIPELINE               1085
+#define IDC_DLSS_FG_GUARD               1086
 
 // Next default values for new objects
 // 
@@ -176,7 +177,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        106
 #define _APS_NEXT_COMMAND_VALUE         40001
-#define _APS_NEXT_CONTROL_VALUE         1086
+#define _APS_NEXT_CONTROL_VALUE         1087
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

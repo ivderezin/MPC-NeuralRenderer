@@ -396,6 +396,8 @@ struct NeuralPass::Impl {
             else
                 message << (options.ManualGeneration() ? fgFailure : L"Off");
         }
+        if (options.frameGenerator==processing::FrameGenerator::Dlss && options.ManualGeneration())
+            message << (options.dlssFgGuard ? L"\nDLSS post-FG guard: on" : L"\nDLSS post-FG guard: off (SDK output)");
         if (asyncOutput.Available())
             message << std::fixed << std::setprecision(1) << L"\nProcessing: " << completedFps << L" fps, GPU "
                     << gpuMilliseconds << L" ms, prepare " << preparationMilliseconds << L" ms (async), init "
@@ -662,7 +664,7 @@ struct NeuralPass::Impl {
         if (options.frameGenerator == processing::FrameGenerator::Dlss && !coreInitialized)
             throw std::runtime_error("Driver NGX initialization failed");
         frameGeneration.Create(options.frameGenerator, device12.Get(), list.Get(), width, height, outWidth, outHeight,
-                               ModuleDirectory(), hdr, options.motionMethod == MotionMethod::EchoStorm);
+                               ModuleDirectory(), hdr, options.motionMethod == MotionMethod::EchoStorm, options.dlssFgGuard);
         for (unsigned i = 0; i < 3; ++i) {
             generated[i].Create(device11.Get(), device12.Get(), outWidth, outHeight, hdr ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM);
             for (auto& slot : displayGenerated)
@@ -1089,6 +1091,13 @@ void NeuralPass::Configure(Settings settings) {
     settings.presentThread = false; // presentation mode does not affect processing
     if (settings_ == settings)
         return;
+    auto resources=settings;
+    resources.dlssFgGuard=settings_.dlssFgGuard;
+    if (resources==settings_) {
+        settings_=settings;
+        if (impl_) { impl_->options.dlssFgGuard=settings.dlssFgGuard; impl_->frameGeneration.SetDlssGuard(settings.dlssFgGuard); }
+        return;
+    }
     settings_ = settings;
     ResetDevice();
 }

@@ -93,6 +93,7 @@ void CVRMainPPage::SetControls()
 	ComboBox_SelectByItemData(m_hWnd, IDC_NR_STAGE, static_cast<unsigned>(m_neuralSettings.nrStage));
 	CheckDlgButton(IDC_MFG_PRESENT_THREAD, m_neuralSettings.presentThread ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_FG_LIMIT_DISPLAY, m_neuralSettings.limitGenerationToDisplay ? BST_CHECKED : BST_UNCHECKED);
+	CheckDlgButton(IDC_DLSS_FG_GUARD, m_neuralSettings.dlssFgGuard ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_ECHO_PIPELINE, m_neuralSettings.echoPipeline ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_AMD_BRIDGE, m_neuralSettings.amdBridge ? BST_CHECKED : BST_UNCHECKED);
 	ComboBox_SelectByItemData(m_hWnd, IDC_MOTION_METHOD, static_cast<unsigned>(m_neuralSettings.motionMethod));
@@ -167,6 +168,7 @@ void CVRMainPPage::EnableControls()
 	GetDlgItem(IDC_MFG_PRESENT_THREAD).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_FG_LIMIT_DISPLAY).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_ECHO_PIPELINE).EnableWindow(neuralAvailable);
+	GetDlgItem(IDC_DLSS_FG_GUARD).EnableWindow(neuralAvailable && m_neuralSettings.frameGenerator==processing::FrameGenerator::Dlss);
 	GetDlgItem(IDC_AMD_BRIDGE).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_MOTION_METHOD).EnableWindow(neuralAvailable);
     for (int id : {IDC_SHADER_PRE_ADD, IDC_SHADER_PRE_CLEAR, IDC_SHADER_POST_ADD, IDC_SHADER_POST_CLEAR})
@@ -445,6 +447,10 @@ INT_PTR CVRMainPPage::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 				SetDirty();
 				return (LRESULT)1;
 			}
+            if (nID == IDC_DLSS_FG_GUARD) {
+                m_neuralSettings.dlssFgGuard=IsDlgButtonChecked(IDC_DLSS_FG_GUARD)==BST_CHECKED;
+                SetDirty(); return (LRESULT)1;
+            }
 			if (nID == IDC_ECHO_PIPELINE) {
 				m_neuralSettings.echoPipeline = IsDlgButtonChecked(IDC_ECHO_PIPELINE) == BST_CHECKED;
 				EnableControls(); SetDirty(); return (LRESULT)1;
@@ -582,7 +588,7 @@ INT_PTR CVRMainPPage::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 			}
 			if (nID == IDC_FRAME_GENERATOR) {
 				m_neuralSettings.frameGenerator = static_cast<processing::FrameGenerator>(ComboBox_GetCurItemData(m_hWnd, IDC_FRAME_GENERATOR));
-				SetDirty(); return (LRESULT)1;
+				EnableControls(); SetDirty(); return (LRESULT)1;
 			}
 			if (nID == IDC_DLSS_MFG) {
 				m_neuralSettings.frameMultiplier = static_cast<unsigned>(ComboBox_GetCurItemData(m_hWnd, IDC_DLSS_MFG));

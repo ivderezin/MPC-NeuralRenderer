@@ -8,6 +8,9 @@ constexpr auto Key = L"Software\\MPC Neural Renderer";
 Settings Settings::Load() {
     Settings settings;
     DWORD value = 0, size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER, Key, L"DlssFgGuard", RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS)
+        settings.dlssFgGuard = value != 0;
+    size = sizeof(value);
     if (RegGetValueW(HKEY_CURRENT_USER, Key, L"EchoPipeline", RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS)
         settings.echoPipeline = value != 0;
     size = sizeof(value);
@@ -98,6 +101,9 @@ long Settings::Save() const {
     if (error == ERROR_SUCCESS)
         error = RegSetValueExW(key, L"EchoPipeline", 0, REG_DWORD,
             reinterpret_cast<const BYTE*>(&pipelineValue), sizeof(pipelineValue));
+    DWORD fgGuardValue = dlssFgGuard ? 1 : 0;
+    if (error == ERROR_SUCCESS)
+        error = RegSetValueExW(key,L"DlssFgGuard",0,REG_DWORD,reinterpret_cast<const BYTE*>(&fgGuardValue),sizeof(fgGuardValue));
     RegCloseKey(key);
     return error;
 }

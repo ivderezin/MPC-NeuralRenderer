@@ -15,7 +15,7 @@ struct GenerationStage::Impl {
     DlssMultiFrameGeneration dlss;
     EchoFrameGeneration echo, guidance;
     Microsoft::WRL::ComPtr<ID3D12Resource> guideDepth, depthUpload;
-    bool nativeEchoMotion=false;
+    bool nativeEchoMotion=false,dlssGuard=true;
     EchoGuard guard;
     processing::FsrApi fsr;
     ffxContext context = nullptr;
@@ -34,10 +34,11 @@ void GenerationStage::Reset() {
 }
 void GenerationStage::Create(processing::FrameGenerator provider, ID3D12Device* device, ID3D12GraphicsCommandList* list,
                              unsigned width, unsigned height, unsigned outWidth, unsigned outHeight,
-                             const std::filesystem::path& directory, bool hdr, bool nativeEchoMotion) {
+                             const std::filesystem::path& directory, bool hdr, bool nativeEchoMotion, bool dlssGuard) {
     impl_ = std::make_unique<Impl>();
     auto& p = *impl_;
     p.provider = provider;
+    p.dlssGuard=dlssGuard;
     p.hdr = hdr;
     p.width = width;
     p.height = height;
@@ -126,7 +127,7 @@ void GenerationStage::Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* 
     if (p.provider == processing::FrameGenerator::Dlss) {
         depth=p.guideDepth.Get();
         const auto result=p.dlss.Evaluate(list, color, depth, motion, output, count, reset);
-        if (result==NVSDK_NGX_Result_Success) p.guard.Dispatch(list,color,motion,output,count,reset);
+        if (result==NVSDK_NGX_Result_Success) p.guard.Dispatch(list,color,motion,output,p.dlssGuard ? count : 0u,reset);
         if (p.nativeEchoMotion) ngx::Transition(list,motion,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         ngx::Check(result,"Dispatch DLSS MFG");
         return;
@@ -171,6 +172,7 @@ void GenerationStage::Dispatch(ID3D12GraphicsCommandList* list, ID3D12Resource* 
     p.guard.Dispatch(list,color,motion,output,1,reset);
     if (p.nativeEchoMotion) ngx::Transition(list,motion,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 }
+void GenerationStage::SetDlssGuard(bool enabled) { if(impl_) impl_->dlssGuard=enabled; }
 std::wstring GenerationStage::RuntimeStatus() const {
     return impl_ && impl_->provider==processing::FrameGenerator::Dlss ? impl_->dlss.RuntimeStatus() : L"";
 }
