@@ -13,6 +13,13 @@
 #include <vector>
 #include "../Source/NeuralRendering/MotionShaders.h"
 #include "../Source/NeuralRendering/MotionEstimator.h"
+#include "../Source/NeuralRendering/MotionRepair.h"
+#include "../Source/Upscaling/MotionAdaptiveShaders.h"
+#include "../Source/FrameGeneration/FrameContentProbe.h"
+#include "../Source/FrameGeneration/ExactInputRepeat.h"
+#include "../Source/EchoStorm/addon/compose11.h"
+#include "../Source/EchoStorm/engine/nr_shaders.h"
+#include <limits>
 using Microsoft::WRL::ComPtr;
 void Check(HRESULT result) { if (FAILED(result)) throw std::runtime_error("D3D11 test failed: " + std::to_string(static_cast<unsigned long>(result))); }
 void Require(bool result, const char* message) { if (!result) throw std::runtime_error(message); }
@@ -42,9 +49,9 @@ struct Gpu {
         if (bind & D3D11_BIND_UNORDERED_ACCESS) Check(device->CreateUnorderedAccessView(image.texture.Get(), nullptr, &image.uav));
         return image;
     }
-    ComPtr<ID3D11ComputeShader> Compile(const char* source) {
+    ComPtr<ID3D11ComputeShader> Compile(const char* source,const char* entry="main") {
         ComPtr<ID3DBlob> code, errors;
-        auto result = D3DCompile(source, strlen(source), "MotionTests", nullptr, nullptr, "main", "cs_5_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &code, &errors);
+        auto result = D3DCompile(source, strlen(source), "MotionTests", nullptr, nullptr, entry, "cs_5_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &code, &errors);
         if (FAILED(result) && errors) throw std::runtime_error(static_cast<const char*>(errors->GetBufferPointer()));
         Check(result);
         ComPtr<ID3D11ComputeShader> shader;
@@ -81,9 +88,115 @@ struct Gpu {
         return pixels;
     }
 };
+void TestEchoPresentation(Gpu& gpu) {
+    const UINT w=17,h=9;
+    std::vector<float> pixels(w*h*4,.2f);
+    auto input=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,pixels.data(),w*16);
+    framegen::ExactInputRepeat repeat;
+    RECT roi{0,0,w,h};
+    auto compare=[&](bool reset=false) {
+        repeat.Record(gpu.context.Get(),input.texture.Get(),input.srv.Get(),roi,reset);
+        // A staging map here stands in for the renderer's existing completion fence.
+        gpu.Read(input,4);
+        return repeat.Same(gpu.context.Get());
+    };
+    Require(!compare(),"First input must be distinct");
+    Require(compare(),"Identical full-resolution input must repeat");
+    pixels[(w*h-1)*4+1]=.20001f;
+    gpu.context->UpdateSubresource(input.texture.Get(),0,nullptr,pixels.data(),w*16,0);
+    Require(!compare(),"One changed channel at odd image boundary must be distinct");
+    Require(compare(),"The updated input must become the repeat baseline");
+    roi={1,1,16,8};pixels[0]=.8f;
+    gpu.context->UpdateSubresource(input.texture.Get(),0,nullptr,pixels.data(),w*16,0);
+    Require(compare(),"Changes outside the video ROI must not trigger new content");
+    pixels[(w+1)*4]=std::numeric_limits<float>::quiet_NaN();
+    gpu.context->UpdateSubresource(input.texture.Get(),0,nullptr,pixels.data(),w*16,0);
+    Require(!compare(),"Non-finite samples must fail open");
+    repeat.Invalidate();Require(!compare(),"Seek must invalidate repeat history");
+
+    // Verify the reference luminance is actually written by both NR delta paths,
+    // rather than only testing a hand-authored composition input.
+    auto nrConstants=ComPtr<ID3D11Buffer>();D3D11_BUFFER_DESC nrDesc{};
+    nrDesc.ByteWidth=48;nrDesc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+    Check(gpu.device->CreateBuffer(&nrDesc,nullptr,&nrConstants));
+    const UINT nrData[12]={w,h,w,h,0,0,0,0,0,0,0,0};
+    gpu.context->UpdateSubresource(nrConstants.Get(),0,nullptr,nrData,0,0);
+    std::vector<float> proxyData(w*h*4,.2f),modelData(w*h*4,.3f);
+    auto proxy=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,proxyData.data(),w*16);
+    auto model=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,modelData.data(),w*16);
+    auto difference=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+    auto smoothHistory=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+    for(unsigned pass=0;pass<2;++pass) {
+        const auto shader=gpu.Compile(pass ? kNrSmoothHlsl : kNrModelHlsl,pass ? "CSDeltaSmooth" : "CSDelta");
+        ID3D11ShaderResourceView* inputs[]={nullptr,proxy.srv.Get(),model.srv.Get(),nullptr};
+        ID3D11UnorderedAccessView* outputs[]={difference.uav.Get(),pass ? smoothHistory.uav.Get() : nullptr};
+        ID3D11Buffer* cb=nrConstants.Get();
+        gpu.context->CSSetShader(shader.Get(),nullptr,0);gpu.context->CSSetShaderResources(0,4,inputs);
+        gpu.context->CSSetConstantBuffers(0,1,&cb);gpu.context->CSSetUnorderedAccessViews(0,2,outputs,nullptr);
+        gpu.context->Dispatch((w+7)/8,(h+7)/8,1);
+        std::fill(std::begin(inputs),std::end(inputs),nullptr);outputs[0]=outputs[1]=nullptr;
+        gpu.context->CSSetShaderResources(0,4,inputs);gpu.context->CSSetUnorderedAccessViews(0,2,outputs,nullptr);
+        const auto result=gpu.Read(difference,4);
+        Require(std::abs(result[0]-.1f)<.0001f && std::abs(result[3]-.2f)<.0001f,"NR delta must retain source luma for reprojection validation");
+    }
+    Compose11 compose;
+    Require(compose.Init(gpu.device.Get(),[](const char* message){std::cerr<<message<<'\n';}),"Native NR compose initialization");
+    std::vector<float> deltaPixels(w*h*4,0);
+    for(UINT y=0;y<h;++y) for(UINT x=0;x<w;++x) {
+        const auto i=(y*w+x)*4;deltaPixels[i]=.1f*(static_cast<float>(x)+.5f)/w;
+        deltaPixels[i+1]=.02f;deltaPixels[i+2]=-.03f;
+    }
+    auto delta=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,deltaPixels.data(),w*16);
+    for (auto fmt:{DXGI_FORMAT_R8G8B8A8_UNORM,DXGI_FORMAT_B8G8R8A8_UNORM}) {
+      for (const unsigned rotation:{0u,90u}) {
+        const bool bgra=fmt==DXGI_FORMAT_B8G8R8A8_UNORM;
+        std::vector<UINT> base(w*h,bgra ? 0xff334d66u : 0xff664d33u);
+        auto target=gpu.Texture(w,h,fmt,D3D11_BIND_RENDER_TARGET,base.data(),w*4);
+        Compose11::Args a;a.target=target.texture.Get();a.delta=delta.srv.Get();a.hiProtect=1;a.rotation=rotation;a.flip=true;
+        Require(compose.Run(gpu.context.Get(),a),"Compose must support RGBA and BGRA swapchain buffers");
+        D3D11_TEXTURE2D_DESC d{};target.texture->GetDesc(&d);
+        d.BindFlags=0;d.Usage=D3D11_USAGE_STAGING;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+        ComPtr<ID3D11Texture2D> staging;Check(gpu.device->CreateTexture2D(&d,nullptr,&staging));
+        gpu.context->CopyResource(staging.Get(),target.texture.Get());
+        D3D11_MAPPED_SUBRESOURCE read{};Check(gpu.context->Map(staging.Get(),0,D3D11_MAP_READ,0,&read));
+        for(UINT y=0;y<h;++y) for(UINT x=0;x<w;++x) {
+            const auto* px=static_cast<const unsigned char*>(read.pData)+y*read.RowPitch+x*4;
+            const float u=rotation ? (static_cast<float>(y)+.5f)/h : (static_cast<float>(x)+.5f)/w;
+            const float expected=51.f+25.5f*(1.f-u);
+            Require(std::abs(px[bgra ? 2 : 0]-expected)<=1.f && px[1]==82 && px[bgra ? 0 : 2]==94,
+                "NR delta must retain RGB order and follow image rotation/flip");
+        }
+        gpu.context->Unmap(staging.Get(),0);
+      }
+    }
+    for(unsigned test=0;test<4;++test) {
+        std::vector<float> correction(w*h*4,.1f), motionPixels(w*h*2,0.f);
+        for(UINT i=0;i<w*h;++i) {
+            correction[i*4+3]=test==1 ? .8f : .2f;
+            if(test==3)motionPixels[i*2]=-static_cast<float>(w);
+        }
+        auto correctionImage=gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,correction.data(),w*16);
+        auto motion=gpu.Texture(w,h,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_SHADER_RESOURCE,motionPixels.data(),w*8);
+        std::vector<UINT> base(w*h,0xff333333u);
+        auto target=gpu.Texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_RENDER_TARGET,base.data(),w*4);
+        Compose11::Args args;args.target=target.texture.Get();args.delta=correctionImage.srv.Get();args.motion=motion.srv.Get();
+        args.reprojectionGuard=true;args.hiProtect=1;args.offset=test==2 ? 3.f : test==3 ? 1.f : 0.f;
+        Require(compose.Run(gpu.context.Get(),args),"Guarded NR compose");
+        D3D11_TEXTURE2D_DESC d{};target.texture->GetDesc(&d);d.BindFlags=0;d.Usage=D3D11_USAGE_STAGING;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+        ComPtr<ID3D11Texture2D> staging;Check(gpu.device->CreateTexture2D(&d,nullptr,&staging));
+        gpu.context->CopyResource(staging.Get(),target.texture.Get());
+        D3D11_MAPPED_SUBRESOURCE read{};Check(gpu.context->Map(staging.Get(),0,D3D11_MAP_READ,0,&read));
+        const auto value=static_cast<const unsigned char*>(read.pData)[(h/2)*read.RowPitch+(w/2)*4];
+        Require(test ? value==51 : value>=76 && value<=77,
+            "NR must retain matching fresh correction and reject mismatched, stale and offscreen reprojections");
+        gpu.context->Unmap(staging.Get(),0);
+    }
+    compose.Shutdown();
+}
 int main() {
     try {
         Gpu gpu;
+        TestEchoPresentation(gpu);
         const UINT size=64;
         std::vector<float> oldPixels(size*size*4), newPixels(oldPixels.size());
         unsigned state=456789;
@@ -195,6 +308,141 @@ int main() {
         echo.Dispatch(gpu.context.Get(),flat.srv.Get(),oddMotion.uav.Get(),oddDistrust.uav.Get(),true);
         echo.Dispatch(gpu.context.Get(),flat.srv.Get(),oddMotion.uav.Get(),oddDistrust.uav.Get(),false);
         for (float value:gpu.Read(oddMotion,2)) Require(value==0,"Odd/flat frames must not generate noisy EchoStorm motion");
+        // FG-only consensus: a flat panel and repeating shelf labels are ambiguous
+        // to a local matcher. A textured stationary HUD must keep its own zero vector.
+        neural::MotionRepair repair;
+        constexpr UINT repairWidth=256, repairHeight=128;
+        std::vector<float> repairBefore(repairWidth*repairHeight*4), repairNow(repairBefore.size());
+        std::vector<float> rawField(repairWidth*repairHeight*2);
+        auto paint=[&](UINT x,UINT y) {
+            if (x>=64 && x<160 && y>=32 && y<96) return .4f; // flat moving panel
+            if (x>=32 && x<224 && y>=96) return (x%8<4) ? .2f : .8f; // repeating labels
+            return referenceValue(x,y);
+        };
+        for (UINT y=0;y<repairHeight;++y) for (UINT x=0;x<repairWidth;++x) {
+            const size_t at=(static_cast<size_t>(y)*repairWidth+x)*4;
+            repairBefore[at]=repairBefore[at+1]=repairBefore[at+2]=paint(x,y); repairBefore[at+3]=1;
+        }
+        for (int direction : {1,-1}) {
+            const float dx=static_cast<float>(direction*16);
+            for (UINT y=0;y<repairHeight;++y) for (UINT x=0;x<repairWidth;++x) {
+                const auto px=static_cast<UINT>(std::clamp(static_cast<int>(x)+direction*16,0,static_cast<int>(repairWidth)-1));
+                const size_t at=(static_cast<size_t>(y)*repairWidth+x)*4;
+                std::copy_n(repairBefore.data()+(static_cast<size_t>(y)*repairWidth+px)*4,4,repairNow.data()+at);
+                const bool ambiguous=(x>=88 && x<136 && y>=48 && y<80) || (x>=88 && x<136 && y>=100 && y<124);
+                rawField[at/2]=ambiguous ? 0.f : dx; rawField[at/2+1]=0;
+                // A fixed textured overlay, where camera motion is a worse match.
+                if (x>=176 && x<208 && y>=40 && y<72) {
+                    std::copy_n(repairBefore.data()+at,4,repairNow.data()+at);
+                    rawField[at/2]=0;
+                }
+            }
+            auto oldFrame=gpu.Texture(repairWidth,repairHeight,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,repairBefore.data(),repairWidth*16);
+            auto newFrame=gpu.Texture(repairWidth,repairHeight,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,repairNow.data(),repairWidth*16);
+            auto rawMotion=gpu.Texture(repairWidth,repairHeight,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_SHADER_RESOURCE,rawField.data(),repairWidth*8);
+            auto repaired=gpu.Texture(repairWidth,repairHeight,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+            auto confidence=gpu.Texture(repairWidth,repairHeight,DXGI_FORMAT_R32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+            repair.Initialize(gpu.device.Get(),repairWidth,repairHeight);
+            repair.Dispatch(gpu.context.Get(),oldFrame.srv.Get(),newFrame.srv.Get(),rawMotion.srv.Get(),nullptr,
+                            repaired.uav.Get(),confidence.uav.Get(),1.f);
+            auto field=gpu.Read(repaired,2);
+            for (UINT y : {60u,110u}) for (UINT x=96;x<128;x+=4) {
+                const size_t at=(static_cast<size_t>(y)*repairWidth+x)*2;
+                Require(std::abs(field[at]-dx)<.05f && std::abs(field[at+1])<.05f,
+                        "FG repair must recover camera motion on flat and repeating patches in both directions");
+            }
+            for (UINT y=48;y<64;++y) for (UINT x=184;x<200;++x) {
+                const size_t at=(static_cast<size_t>(y)*repairWidth+x)*2;
+                Require(field[at]==0 && field[at+1]==0,"FG repair must not drag a textured stationary HUD");
+            }
+            for (float value:field) Require(std::isfinite(value),"FG repair must produce finite motion");
+            Require(gpu.Read(rawMotion,2)==rawField,"FG repair must preserve NR/SR's original motion field");
+            const auto confidencePixels=gpu.Read(confidence,1);
+            Require(confidencePixels[60*repairWidth+100]==1,"Fast camera motion must reject SR history after repair");
+            Require(confidencePixels[56*repairWidth+192]==0,"A fixed HUD must retain reliable SR history");
+            std::fill(rawField.begin(),rawField.end(),0.f);
+            auto stillMotion=gpu.Texture(repairWidth,repairHeight,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_SHADER_RESOURCE,rawField.data(),repairWidth*8);
+            repair.Dispatch(gpu.context.Get(),oldFrame.srv.Get(),oldFrame.srv.Get(),stillMotion.srv.Get(),nullptr,repaired.uav.Get());
+            for (float value:gpu.Read(repaired,2)) Require(value==0,"Static/reset FG vectors must stay exactly zero");
+        }
+        repair.Initialize(gpu.device.Get(),13,11);
+        auto tinyVectors=gpu.Texture(13,11,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_SHADER_RESOURCE,std::vector<float>(13*11*2,0.f).data(),13*8);
+        repair.Dispatch(gpu.context.Get(),flat.srv.Get(),flat.srv.Get(),tinyVectors.srv.Get(),nullptr,oddMotion.uav.Get());
+        for (float value:gpu.Read(oddMotion,2)) Require(value==0,"FG repair must handle odd and partial tiles");
+        // Full-resolution 4K vectors exceed the upstream half-size voting range.
+        // Keep the test short vertically, with partial edge cells/tiles.
+        constexpr UINT wideWidth=3841, wideHeight=17;
+        std::vector<float> widePixels(wideWidth*wideHeight*4,.4f), wideMotion(wideWidth*wideHeight*2,0.f);
+        auto wideFrame=gpu.Texture(wideWidth,wideHeight,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,widePixels.data(),wideWidth*16);
+        auto wideOutput=gpu.Texture(wideWidth,wideHeight,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+        repair.Initialize(gpu.device.Get(),wideWidth,wideHeight);
+        for (float cameraShift : {96.f,-80.f}) {
+            for (UINT y=0;y<wideHeight;++y) for (UINT x=0;x<wideWidth;++x)
+                wideMotion[(static_cast<size_t>(y)*wideWidth+x)*2]=(x>=1920 && x<1952) ? 0.f : cameraShift;
+            auto wideInput=gpu.Texture(wideWidth,wideHeight,DXGI_FORMAT_R32G32_FLOAT,D3D11_BIND_SHADER_RESOURCE,wideMotion.data(),wideWidth*8);
+            repair.Dispatch(gpu.context.Get(),wideFrame.srv.Get(),wideFrame.srv.Get(),wideInput.srv.Get(),nullptr,wideOutput.uav.Get());
+            const auto field=gpu.Read(wideOutput,2);
+            Require(std::abs(field[(8*wideWidth+1936)*2]-cameraShift)<.05f,
+                    "4K consensus must retain camera vectors beyond 64 source pixels");
+        }
+        // Provider-independent protection also covers DLSS models ignoring bias masks.
+        auto adaptiveShader=gpu.Compile(upscaling::MotionAdaptiveShader);
+        D3D11_SAMPLER_DESC sampleDesc{};
+        sampleDesc.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sampleDesc.AddressU=sampleDesc.AddressV=sampleDesc.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;
+        sampleDesc.MaxLOD=D3D11_FLOAT32_MAX;
+        ComPtr<ID3D11SamplerState> linearSampler;
+        Check(gpu.device->CreateSamplerState(&sampleDesc,&linearSampler));
+        ID3D11SamplerState* sampleState=linearSampler.Get();
+        gpu.context->CSSetSamplers(0,1,&sampleState);
+        std::vector<float> invented(13*11*4,.9f), plain(7*5*4,.25f);
+        auto up=gpu.Texture(13,11,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,invented.data(),13*16);
+        auto spatialInput=gpu.Texture(7,5,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,plain.data(),7*16);
+        auto adaptiveOutput=gpu.Texture(13,11,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
+        for (float d : {0.f,1.f}) {
+            std::vector<float> maskValues(7*5,d);
+            auto mask=gpu.Texture(7,5,DXGI_FORMAT_R32_FLOAT,D3D11_BIND_SHADER_RESOURCE,maskValues.data(),7*4);
+            gpu.Dispatch(adaptiveShader.Get(),up,&spatialInput,adaptiveOutput,13,11,0,0,0,false,nullptr,&mask);
+            const auto result=gpu.Read(adaptiveOutput,4);
+            for (size_t k=0;k<result.size();k+=4)
+                Require(std::abs(result[k]-(d==0 ? .9f : .25f))<.0001f,
+                        "SR must retain trusted detail and replace untrusted history with this frame for every provider");
+        }
+        // Probe the actual production diagnostic without affecting frame history.
+        framegen::FrameContentProbe probe;
+        auto probeImage=[&](UINT w,UINT h,float v) {
+            std::vector<float> rgba(static_cast<size_t>(w)*h*4,v);
+            return gpu.Texture(w,h,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,rgba.data(),w*16);
+        };
+        auto rawA=probeImage(13,11,.2f), rawB=probeImage(13,11,.4f);
+        auto realA=probeImage(7,5,.2f), realB=probeImage(7,5,.3f), realC=probeImage(7,5,.4f);
+        auto middle=probeImage(7,5,.25f);
+        auto finishProbe=[&]() {
+            gpu.context->Flush(); // tests may wait; the production Collect never flushes or waits
+            for (unsigned i=0;i<5000 && probe.Pending();++i) {
+                probe.Collect(gpu.context.Get());
+                if (probe.Pending()) Sleep(1);
+            }
+            Require(!probe.Pending(),"Content probe must complete on WARP");
+        };
+        probe.Submit(gpu.context.Get(),rawA.texture.Get(),realA.texture.Get(),{},0);
+        Require(!probe.Pending() && probe.metrics.samples==0,"First diagnostic frame must only establish endpoints");
+        probe.Submit(gpu.context.Get(),rawA.texture.Get(),realB.texture.Get(),{middle.texture.Get(),nullptr,nullptr},1);
+        finishProbe();
+        Require(probe.metrics.samples==1 && probe.metrics.unchangedInputs==1 && probe.metrics.delta[0]==0,
+                "Repeated raw input must be visible even if NR changes its output");
+        Require(std::abs(probe.metrics.delta[1]-25.5f)<.001f &&
+                std::abs(probe.metrics.delta[2]-12.75f)<.001f && std::abs(probe.metrics.delta[3]-12.75f)<.001f,
+                "Content diagnostics must compare generated frames against both correct real endpoints");
+        probe.Submit(gpu.context.Get(),rawB.texture.Get(),realC.texture.Get(),{realC.texture.Get(),nullptr,nullptr},1);
+        finishProbe();
+        Require(probe.metrics.samples==2 && probe.metrics.unchangedInputs==1 && probe.metrics.delta[2]==0 &&
+                std::abs(probe.metrics.delta[0]-51.f)<.001f,
+                "A generated copy of the current endpoint must be distinguishable from changing raw input");
+        probe.Submit(gpu.context.Get(),rawA.texture.Get(),realA.texture.Get(),{},0);
+        probe.Invalidate();
+        finishProbe();
+        Require(probe.metrics.samples==0,"Invalidated pre-seek probe results must not reappear");
         auto crop=gpu.Texture(13,11,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_UNORDERED_ACCESS);
         auto prepare=gpu.Compile(neural::PrepareShader.c_str());
         gpu.Dispatch(prepare.Get(),previous,nullptr,crop,13,11,0,5,7);

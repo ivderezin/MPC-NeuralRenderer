@@ -28,8 +28,12 @@
     <ClCompile Include="FrameGeneration\PresentationThread.cpp"><Filter>FrameGeneration</Filter></ClCompile>
     <ClInclude Include="Ngx\Feature.h"><Filter>Ngx</Filter></ClInclude>
     <ClInclude Include="Upscaling\UpscalePolicy.h"><Filter>Upscaling</Filter></ClInclude>
+    <ClInclude Include="Upscaling\MotionAdaptive.h"><Filter>Upscaling</Filter></ClInclude>
+    <ClInclude Include="Upscaling\MotionAdaptiveShaders.h"><Filter>Upscaling</Filter></ClInclude>
     <ClInclude Include="Upscaling\DlssSuperResolution.h"><Filter>Upscaling</Filter></ClInclude>
     <ClInclude Include="FrameGeneration\DlssMultiFrameGeneration.h"><Filter>FrameGeneration</Filter></ClInclude>
+    <ClInclude Include="FrameGeneration\FrameContentProbe.h"><Filter>FrameGeneration</Filter></ClInclude>
+    <ClInclude Include="FrameGeneration\DisplayCadence.h"><Filter>FrameGeneration</Filter></ClInclude>
     <ClInclude Include="FrameGeneration\FramePlan.h"><Filter>FrameGeneration</Filter></ClInclude>
     <ClInclude Include="FrameGeneration\PresentationTimer.h"><Filter>FrameGeneration</Filter></ClInclude>
     <ClInclude Include="FrameGeneration\PresentationThread.h"><Filter>FrameGeneration</Filter></ClInclude>
@@ -41,11 +45,41 @@
   <ItemGroup>
     <ClCompile Include="NeuralRendering\NeuralPass.cpp"><Filter>NeuralRendering</Filter></ClCompile>
     <ClCompile Include="NeuralRendering\NeuralSettings.cpp"><Filter>NeuralRendering</Filter></ClCompile>
+    <ClCompile Include="EchoStorm\addon\bridge.cpp"><Filter>NeuralRendering</Filter></ClCompile>
+    <ClInclude Include="EchoStorm\addon\bridge.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClCompile Include="EchoStorm\addon\compose11.cpp"><Filter>NeuralRendering</Filter></ClCompile>
+    <ClInclude Include="EchoStorm\addon\compose11.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClCompile Include="EchoStorm\addon\gpu_timer11.cpp"><Filter>NeuralRendering</Filter></ClCompile>
+    <ClInclude Include="EchoStorm\addon\gpu_timer11.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClCompile Include="EchoStorm\engine\dlaa_model.cpp"><Filter>NeuralRendering</Filter></ClCompile>
+    <ClInclude Include="EchoStorm\engine\dlaa_model.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClCompile Include="EchoStorm\engine\flow_estimator.cpp"><Filter>NeuralRendering</Filter></ClCompile>
+    <ClInclude Include="EchoStorm\engine\flow_estimator.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClCompile Include="EchoStorm\engine\flow_fix.cpp"><Filter>NeuralRendering</Filter></ClCompile>
+    <ClInclude Include="EchoStorm\engine\flow_fix.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClInclude Include="EchoStorm\engine\hdr_hlsl.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClInclude Include="EchoStorm\engine\ngx_paths.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClInclude Include="EchoStorm\engine\ngx_users.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClCompile Include="EchoStorm\engine\nr_engine.cpp"><Filter>NeuralRendering</Filter></ClCompile>
+    <ClInclude Include="EchoStorm\engine\nr_engine.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClInclude Include="EchoStorm\engine\nr_shaders.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClCompile Include="EchoStorm\engine\own_synth.cpp"><Filter>NeuralRendering</Filter></ClCompile>
+    <ClInclude Include="EchoStorm\engine\own_synth.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClCompile Include="EchoStorm\engine\shader_cache.cpp"><Filter>NeuralRendering</Filter></ClCompile>
+    <ClInclude Include="EchoStorm\engine\shader_cache.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClInclude Include="EchoStorm\forwarder\nr_api.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClInclude Include="FrameGeneration\EchoFrameGeneration.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClCompile Include="FrameGeneration\EchoFrameGeneration.cpp"><Filter>NeuralRendering</Filter></ClCompile>
+    <ClInclude Include="NeuralRendering\EchoNr.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClCompile Include="NeuralRendering\EchoNr.cpp"><Filter>NeuralRendering</Filter></ClCompile>
     <ClInclude Include="NeuralRendering\NeuralPass.h"><Filter>NeuralRendering</Filter></ClInclude>
     <ClInclude Include="NeuralRendering\NeuralSettings.h"><Filter>NeuralRendering</Filter></ClInclude>
     <ClInclude Include="NeuralRendering\FrameHistory.h"><Filter>NeuralRendering</Filter></ClInclude>
     <ClInclude Include="NeuralRendering\AsyncOutput.h"><Filter>NeuralRendering</Filter></ClInclude>
     <ClInclude Include="NeuralRendering\MotionShaders.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClInclude Include="NeuralRendering\MotionRepair.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClInclude Include="NeuralRendering\MotionRepairShaders.h"><Filter>NeuralRendering</Filter></ClInclude>
+    <ClCompile Include="NeuralRendering\MotionRepair.cpp"><Filter>NeuralRendering</Filter></ClCompile>
     <ClInclude Include="NeuralRendering\MotionEstimator.h"><Filter>NeuralRendering</Filter></ClInclude>
     <ClInclude Include="NeuralRendering\EchoMotionShaders.h"><Filter>NeuralRendering</Filter></ClInclude>
     <ClCompile Include="NeuralRendering\MotionEstimator.cpp"><Filter>NeuralRendering</Filter></ClCompile>
@@ -306,4 +340,14 @@
       <Filter>Resource Files</Filter>
     </None>
   </ItemGroup>
+  <ItemGroup><ClCompile Include="EchoStorm\addon\auto_quality.cpp" /></ItemGroup>
+  <ItemGroup><ClInclude Include="EchoStorm\addon\auto_quality.h" /></ItemGroup>
+  <ItemGroup><ClCompile Include="FrameGeneration\EchoGuard.cpp" /></ItemGroup>
+  <ItemGroup><ClInclude Include="FrameGeneration\EchoGuard.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="FrameGeneration\EchoGuardShaders.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="FrameGeneration\EchoPresentationClock.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="FrameGeneration\ExactInputRepeat.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="FrameGeneration\DlssCaptureCamera.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="Processing\LoadedModules.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="FrameGeneration\DlssSampleCapture.h" /><ClCompile Include="FrameGeneration\DlssSampleCapture.cpp"></ClCompile></ItemGroup>
 </Project>

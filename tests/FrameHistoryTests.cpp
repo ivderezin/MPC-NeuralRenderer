@@ -1,3 +1,4 @@
+#include "../Source/FrameGeneration/EchoPresentationClock.h"
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../Source/NeuralRendering/FrameHistory.h"
 #include "../Source/NeuralRendering/AsyncOutput.h"
@@ -43,5 +44,18 @@ int main() {
     Require(!output.Collect(3) && !output.Available(), "pre-seek inference must never reappear");
     output.Submit(4, true);
     Require(output.Collect(4) && output.Available(), "post-seek inference must restore output");
+    framegen::EchoPresentationClock clock;
+    // Stable 100 Hz display, two matching quarter-second observations.
+    clock.Observe(1,10000,1000000);clock.Observe(26,260000,1000000);clock.Observe(51,510000,1000000);
+    std::array<std::int64_t,4> aligned{515001,525001,535001,545001};
+    clock.Align(aligned,3,510000,40000);
+    Require(aligned[0]==515000 && aligned[1]==525000 && aligned[2]==535000,"Stable refresh must align independent presentation slots");
+    std::array<std::int64_t,4> overRefresh{512000,514000,516000,518000};
+    const auto original=overRefresh;clock.Align(overRefresh,4,510000,10000);
+    Require(overRefresh==original,"Refresh alignment must not cap an above-refresh multiplier");
+    clock.Reset();auto unstable=original;clock.Align(unstable,4,510000,10000);
+    Require(unstable==original,"Unstable / unavailable refresh timings must preserve interval pacing");
+    Require(clock.SmoothDuration(16000,1000000)==16000,"Initial duration");
+    Require(clock.SmoothDuration(20000,1000000)==16400,"Echo interval smoothing");
     std::cout << "Frame history and asynchronous output tests passed\n";
 }

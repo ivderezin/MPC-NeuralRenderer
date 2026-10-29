@@ -27,12 +27,14 @@
 #include <map>
 #include "IVideoRenderer.h"
 #include "NeuralRendering/NeuralPass.h"
+#include "NeuralRendering/EchoNr.h"
 #include "FrameGeneration/FramePlan.h"
 #include "FrameGeneration/PresentationTimer.h"
 #include "FrameGeneration/FrameQueue.h"
 #include "FrameGeneration/PresentationThread.h"
 #include <mutex>
 #include "FrameGeneration/XessPresenter.h"
+#include "FrameGeneration/DisplayCadence.h"
 #include "DX11Helper.h"
 #include "D3D11VP.h"
 #include "D3DUtil/D3D11Font.h"
@@ -51,6 +53,7 @@ class CDX11VideoProcessor
 {
 private:
 	neural::NeuralPass m_neuralPass;
+	neural::EchoNr m_echoNr;
 	neural::Settings m_processingSettings;
 	framegen::XessPresenter m_xessPresenter;
 	HRESULT GetDrawingBuffer(ID3D11Texture2D** texture);
@@ -62,13 +65,15 @@ private:
 	framegen::FrameQueue m_mfgQueue;        // dedicated-thread mode, guarded by m_mfgQueueLock
 	std::mutex m_mfgQueueLock;
 	framegen::PresentationThread m_mfgThread;
-	HRESULT DrawPresentationFrame(ID3D11Texture2D* frame);
+	HRESULT DrawPresentationFrame(ID3D11Texture2D* frame,long long timestamp,bool generated);
 	bool NextQueuedDeadline(std::int64_t& deadline);
 	bool PresentQueuedFrame();
 	unsigned long long m_mfgSerial = 0;
 	bool m_mfgActive = false;
 	int m_pipelineRotation = 0;
 	CDrawStats m_outputStats; // every successful Present, real and generated
+	framegen::DisplayCadence m_displayCadence; // DXGI displayed-image statistics, when available
+	framegen::EchoPresentationClock m_echoPresentationClock;
 	struct {
 		unsigned generated = 0, real = 0, skipped = 0, stops = 0;
 	} m_mfgCounters;
@@ -76,7 +81,8 @@ private:
 	REFERENCE_TIME m_neuralFrameTimestamp = 0;
 	Tex2D_t m_TexNeural; // view of the latest completed NR frame, owned by m_neuralPass
 	bool NeuralSourceSupported() { return !m_pPSHalfOUtoInterlace; }
-	bool NeuralActive() { return !m_processingSuspended && m_neuralPass.Enabled() && NeuralSourceSupported(); }
+	bool NeuralActive() { return !m_processingSuspended &&
+		(m_neuralPass.Enabled() || (m_processingSettings.echoPipeline && m_processingSettings.enabled)) && NeuralSourceSupported(); }
 	processing::Upscaler m_lastUpscaler = processing::Upscaler::Dlss;
 	unsigned m_lastFrameMultiplier = 2;
 	bool m_processingSuspended = false; // Ctrl+Alt+R: plain MPC VR output without NR / upscaling / generation

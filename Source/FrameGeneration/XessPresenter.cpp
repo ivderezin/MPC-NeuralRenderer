@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "XessPresenter.h"
 #include "GenerationPolicy.h"
+#include "../NeuralRendering/MotionRepair.h"
 #ifdef _WIN64
 #include "../Processing/RuntimeLibrary.h"
 #include "../Processing/ResourceBarrier.h"
 #include "../NeuralRendering/MotionShaders.h"
-#include "../NeuralRendering/MotionEstimator.h"
+#include "EchoFrameGeneration.h"
 #include <d3d11_4.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
@@ -94,9 +95,10 @@ struct XessPresenter::Impl {
     ComPtr<ID3D11ShaderResourceView> previousView;
     ComPtr<ID3D11ComputeShader> motion;
     ComPtr<ID3D11Buffer> constants;
-    SharedTexture scene, vectors, depth, distrust;
-    neural::MotionEstimator estimator;
-    bool echoMotion = false, echoReset = true;
+    SharedTexture scene, vectors, repairedVectors, depth, distrust;
+    neural::MotionRepair motionRepair;
+    EchoFrameGeneration estimator;
+    bool echoMotion = false, echoReset = true, limitToDisplay = false;
     unsigned width = 0, height = 0, interpolations = 1, presentId = 0;
     unsigned long long lastToken = 0;
     bool validToken = false, reset = true, enabled = false, failed = false, displayLimited = false;
@@ -135,6 +137,8 @@ struct XessPresenter::Impl {
         previousView.Reset();
         scene = {};
         vectors = {};
+        repairedVectors = {};
+        distrust = {};
         depth = {};
         width = w;
         height = h;
@@ -150,9 +154,11 @@ struct XessPresenter::Impl {
         CheckHr(device11->CreateShaderResourceView(previous.Get(), nullptr, &previousView), "Create XeSS previous SRV");
         scene.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_B8G8R8A8_UNORM, false);
         vectors.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_R16G16_FLOAT);
+        repairedVectors.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_R16G16_FLOAT);
+        if (!echoMotion) motionRepair.Initialize(device11.Get(), w, h);
         if (echoMotion) {
             distrust.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_R8_UNORM);
-            estimator.Initialize(device11.Get(), w, h);
+            estimator.Create(device12.Get(),w,h,false,true,DXGI_FORMAT_B8G8R8A8_UNORM);
             echoReset = true;
         }
         depth.Create(device11.Get(), device12.Get(), w, h, DXGI_FORMAT_R32_FLOAT);
@@ -215,7 +221,8 @@ struct XessPresenter::Impl {
         CheckIntel(xefgSwapChainSetLatencyReductionFn(fg, latency), "Attach XeLL to XeSS FG");
         xefg_swapchain_properties_t properties{};
         CheckIntel(xefgSwapChainGetPropertiesFn(fg, &properties), "Query XeSS FG capabilities");
-        const auto limit = GeneratedLimit(multiplier, properties.maxSupportedInterpolations, refreshHz, frameTimeMs);
+        const auto limit = GeneratedLimit(multiplier, properties.maxSupportedInterpolations, refreshHz, frameTimeMs,
+                                          limitToDisplay);
         displayLimited = limit == 0;
         interpolations = (std::min)({multiplier - 1, properties.maxSupportedInterpolations, (std::max)(1u, limit)});
         if (!interpolations)
@@ -277,10 +284,7 @@ struct XessPresenter::Impl {
         if (reset)
             context11->CopyResource(previous.Get(), scene.texture.Get());
         if (useFG) {
-            if (echoMotion) {
-                estimator.Dispatch(context11.Get(), scene.srv.Get(), vectors.uav.Get(), distrust.uav.Get(), reset || echoReset);
-                echoReset = false;
-            } else {
+            if (!echoMotion) {
                 const UINT params[] = {width, height, 0, 0, reset ? 1u : 0u, 0, 0, 0};
                 context11->UpdateSubresource(constants.Get(), 0, nullptr, params, 0, 0);
                 ID3D11Buffer* cb[] = {constants.Get()};
@@ -299,6 +303,8 @@ struct XessPresenter::Impl {
                 context11->CSSetConstantBuffers(0, 1, cb);
                 context11->CSSetShader(nullptr, nullptr, 0);
             }
+            if (!echoMotion) motionRepair.Dispatch(context11.Get(), previousView.Get(), scene.srv.Get(),
+                vectors.srv.Get(), distrust.srv.Get(), repairedVectors.uav.Get());
         } else echoReset = true;
 
         context11->CopyResource(previous.Get(), scene.texture.Get());
@@ -316,19 +322,28 @@ struct XessPresenter::Impl {
         Transition(list.Get(), buffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
         Transition(list.Get(), scene.resource.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
         if (useFG) {
-            for (auto* resource : {vectors.resource.Get(), depth.resource.Get()})
+            if (echoMotion) {
+                Transition(list.Get(),scene.resource.Get(),D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                Transition(list.Get(),repairedVectors.resource.Get(),D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                estimator.Dispatch(list.Get(),scene.resource.Get(),{},0,reset || echoReset);
+                estimator.WriteGuidance(list.Get(),repairedVectors.resource.Get());
+                echoReset=false;
+                Transition(list.Get(),scene.resource.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COMMON);
+                Transition(list.Get(),repairedVectors.resource.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COMMON);
+            }
+            for (auto* resource : {repairedVectors.resource.Get(), depth.resource.Get()})
                 Transition(list.Get(), resource, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
             xefg_swapchain_d3d12_resource_data_t data{};
             data.validity = XEFG_SWAPCHAIN_RV_ONLY_NOW;
             data.resourceSize = {width, height};
             data.incomingState = D3D12_RESOURCE_STATE_COPY_SOURCE;
             data.type = XEFG_SWAPCHAIN_RES_MOTION_VECTOR;
-            data.pResource = vectors.resource.Get();
+            data.pResource = repairedVectors.resource.Get();
             CheckIntel(xefgSwapChainD3D12TagFrameResourceFn(fg, list.Get(), presentId, &data), "Tag XeSS motion");
             data.type = XEFG_SWAPCHAIN_RES_DEPTH;
             data.pResource = depth.resource.Get();
             CheckIntel(xefgSwapChainD3D12TagFrameResourceFn(fg, list.Get(), presentId, &data), "Tag XeSS depth");
-            for (auto* resource : {vectors.resource.Get(), depth.resource.Get()})
+            for (auto* resource : {repairedVectors.resource.Get(), depth.resource.Get()})
                 Transition(list.Get(), resource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
             xefg_swapchain_frame_constant_data_t constantsData{};
             for (unsigned i = 0; i < 4; ++i)
@@ -368,16 +383,18 @@ void XessPresenter::Reset() {
 }
 HRESULT XessPresenter::Create(ID3D11Device* device, ID3D11DeviceContext* context, IDXGIFactory2* factory, HWND window,
                               DXGI_SWAP_CHAIN_DESC1 description, unsigned multiplier, double refreshHz,
-                              float frameTimeMs, const std::filesystem::path& directory, IDXGISwapChain1** swapchain, bool echoMotion) {
+                              float frameTimeMs, const std::filesystem::path& directory, IDXGISwapChain1** swapchain,
+                              bool echoMotion, bool limitToDisplay) {
     Reset();
     try {
         auto instance = std::make_unique<Impl>();
         instance->echoMotion = echoMotion;
+        instance->limitToDisplay = limitToDisplay;
         instance->Initialize(device, context, factory, window, description, multiplier, refreshHz, frameTimeMs,
                              directory);
         CheckHr(instance->swapchain.CopyTo(swapchain), "Return XeSS swap chain");
         status_ =
-            L"XeSS FG: up to " + std::to_wstring(instance->interpolations + 1) + L"x (" + std::wstring(echoMotion ? L"EchoStorm motion" : L"fast motion") + L", zero depth)";
+            L"XeSS FG: up to " + std::to_wstring(instance->interpolations + 1) + L"x (" + std::wstring(echoMotion ? L"native D3D12 EchoStorm motion" : L"fast motion") + L", zero depth)";
         impl_ = std::move(instance);
         return S_OK;
     } catch (const std::exception& error) {
@@ -422,7 +439,7 @@ HRESULT XessPresenter::Present(unsigned syncInterval, bool running, unsigned lon
         if (!impl_->failed) {
             status_ = impl_->displayLimited ? L"XeSS FG: bypass (display refresh limit)"
                 : L"XeSS FG: up to " + std::to_wstring(impl_->interpolations + 1)
-                    + L"x, latest present " + std::to_wstring(impl_->lastPresented) + L" frames (" + std::wstring(impl_->echoMotion ? L"EchoStorm motion" : L"fast motion") + L", zero depth)";
+                    + L"x, latest present " + std::to_wstring(impl_->lastPresented) + L" frames (" + std::wstring(impl_->echoMotion ? L"native D3D12 EchoStorm motion" : L"fast motion") + L", zero depth)";
         }
         return result;
     } catch (const std::exception& error) {
@@ -442,7 +459,7 @@ XessPresenter::~XessPresenter() = default;
 void XessPresenter::Reset() {}
 void XessPresenter::ClearHistory() {}
 HRESULT XessPresenter::Create(ID3D11Device*, ID3D11DeviceContext*, IDXGIFactory2*, HWND, DXGI_SWAP_CHAIN_DESC1,
-                              unsigned, double, float, const std::filesystem::path&, IDXGISwapChain1**, bool) {
+                              unsigned, double, float, const std::filesystem::path&, IDXGISwapChain1**, bool, bool) {
     return E_NOTIMPL;
 }
 HRESULT XessPresenter::BackBuffer(ID3D11Texture2D**) const {

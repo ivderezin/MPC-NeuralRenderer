@@ -19,6 +19,7 @@
  */
 
 #include "stdafx.h"
+#include "FrameGeneration/DlssSampleCapture.h"
 #include "resource.h"
 #include "Helper.h"
 #include "DisplayConfig.h"
@@ -92,6 +93,9 @@ void CVRMainPPage::SetControls()
 	CheckDlgButton(IDC_NEURAL_ENABLED, m_neuralSettings.enabled ? BST_CHECKED : BST_UNCHECKED);
 	ComboBox_SelectByItemData(m_hWnd, IDC_NR_STAGE, static_cast<unsigned>(m_neuralSettings.nrStage));
 	CheckDlgButton(IDC_MFG_PRESENT_THREAD, m_neuralSettings.presentThread ? BST_CHECKED : BST_UNCHECKED);
+	CheckDlgButton(IDC_FG_LIMIT_DISPLAY, m_neuralSettings.limitGenerationToDisplay ? BST_CHECKED : BST_UNCHECKED);
+	CheckDlgButton(IDC_DLSS_FG_GUARD, m_neuralSettings.dlssFgGuard ? BST_CHECKED : BST_UNCHECKED);
+	CheckDlgButton(IDC_ECHO_PIPELINE, m_neuralSettings.echoPipeline ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_AMD_BRIDGE, m_neuralSettings.amdBridge ? BST_CHECKED : BST_UNCHECKED);
 	ComboBox_SelectByItemData(m_hWnd, IDC_MOTION_METHOD, static_cast<unsigned>(m_neuralSettings.motionMethod));
 	ComboBox_SelectByItemData(m_hWnd, IDC_NEURAL_INTENSITY, m_neuralSettings.intensity);
@@ -163,12 +167,16 @@ void CVRMainPPage::EnableControls()
 	GetDlgItem(IDC_FRAME_GENERATOR).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_DLSS_MFG).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_MFG_PRESENT_THREAD).EnableWindow(neuralAvailable);
+	GetDlgItem(IDC_FG_LIMIT_DISPLAY).EnableWindow(neuralAvailable);
+	GetDlgItem(IDC_ECHO_PIPELINE).EnableWindow(neuralAvailable);
+	GetDlgItem(IDC_DLSS_FG_GUARD).EnableWindow(neuralAvailable && m_neuralSettings.frameGenerator==processing::FrameGenerator::Dlss);
+	GetDlgItem(IDC_DLSS_SAVE_SAMPLE).EnableWindow(neuralAvailable && m_neuralSettings.frameGenerator==processing::FrameGenerator::Dlss && m_neuralSettings.frameMultiplier>1);
 	GetDlgItem(IDC_AMD_BRIDGE).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_MOTION_METHOD).EnableWindow(neuralAvailable);
     for (int id : {IDC_SHADER_PRE_ADD, IDC_SHADER_PRE_CLEAR, IDC_SHADER_POST_ADD, IDC_SHADER_POST_CLEAR})
         GetDlgItem(id).EnableWindow(m_SetsPP.bUseD3D11);
 	GetDlgItem(IDC_NEURAL_INTENSITY).EnableWindow(neuralAvailable && m_neuralSettings.enabled);
-	GetDlgItem(IDC_NR_STAGE).EnableWindow(neuralAvailable && m_neuralSettings.enabled);
+	GetDlgItem(IDC_NR_STAGE).EnableWindow(neuralAvailable && m_neuralSettings.enabled && !m_neuralSettings.echoPipeline);
 
 	if (!IsWindows8OrGreater()) { // Windows 7
 		const BOOL bEnable = !m_SetsPP.bUseD3D11;
@@ -254,7 +262,7 @@ HRESULT CVRMainPPage::OnActivate()
 	ComboBox_AddStringData(m_hWnd, IDC_NR_STAGE, L"After upscaling", static_cast<unsigned>(neural::NrStage::AfterUpscale));
 	ComboBox_AddStringData(m_hWnd, IDC_NR_STAGE, L"Before and after", static_cast<unsigned>(neural::NrStage::Both));
 	SendDlgItemMessageW(IDC_FRAME_GENERATOR, CB_RESETCONTENT, 0, 0);
-	for (auto provider : {processing::FrameGenerator::Dlss, processing::FrameGenerator::Fsr, processing::FrameGenerator::Xess})
+	for (auto provider : {processing::FrameGenerator::EchoStorm, processing::FrameGenerator::Dlss, processing::FrameGenerator::Fsr, processing::FrameGenerator::Xess})
 		ComboBox_AddStringData(m_hWnd, IDC_FRAME_GENERATOR, processing::Name(provider), static_cast<unsigned>(provider));
 	SendDlgItemMessageW(IDC_DLSS_MFG, CB_RESETCONTENT, 0, 0);
 	ComboBox_AddStringData(m_hWnd, IDC_DLSS_MFG, L"Off", 1);
@@ -436,6 +444,23 @@ INT_PTR CVRMainPPage::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 				SetDirty();
 				return (LRESULT)1;
 			}
+			if (nID == IDC_FG_LIMIT_DISPLAY) {
+				m_neuralSettings.limitGenerationToDisplay = IsDlgButtonChecked(IDC_FG_LIMIT_DISPLAY) == BST_CHECKED;
+				SetDirty();
+				return (LRESULT)1;
+			}
+            if (nID == IDC_DLSS_SAVE_SAMPLE) {
+                framegen::DlssSampleCapture::Request();
+                return (LRESULT)1;
+            }
+            if (nID == IDC_DLSS_FG_GUARD) {
+                m_neuralSettings.dlssFgGuard=IsDlgButtonChecked(IDC_DLSS_FG_GUARD)==BST_CHECKED;
+                SetDirty(); return (LRESULT)1;
+            }
+			if (nID == IDC_ECHO_PIPELINE) {
+				m_neuralSettings.echoPipeline = IsDlgButtonChecked(IDC_ECHO_PIPELINE) == BST_CHECKED;
+				EnableControls(); SetDirty(); return (LRESULT)1;
+			}
 			if (nID == IDC_NEURAL_ENABLED) {
 				m_neuralSettings.enabled = IsDlgButtonChecked(IDC_NEURAL_ENABLED) == BST_CHECKED;
 				EnableControls();
@@ -569,11 +594,11 @@ INT_PTR CVRMainPPage::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 			}
 			if (nID == IDC_FRAME_GENERATOR) {
 				m_neuralSettings.frameGenerator = static_cast<processing::FrameGenerator>(ComboBox_GetCurItemData(m_hWnd, IDC_FRAME_GENERATOR));
-				SetDirty(); return (LRESULT)1;
+				EnableControls(); SetDirty(); return (LRESULT)1;
 			}
 			if (nID == IDC_DLSS_MFG) {
 				m_neuralSettings.frameMultiplier = static_cast<unsigned>(ComboBox_GetCurItemData(m_hWnd, IDC_DLSS_MFG));
-				SetDirty(); return (LRESULT)1;
+				EnableControls(); SetDirty(); return (LRESULT)1;
 			}
 			if (nID == IDC_NEURAL_INTENSITY) {
 				m_neuralSettings.intensity = static_cast<int>(ComboBox_GetCurItemData(m_hWnd, IDC_NEURAL_INTENSITY));

@@ -13,14 +13,16 @@ inline const wchar_t* Name(MotionMethod value) {
     return value == MotionMethod::EchoStorm ? L"EchoStorm coarse-to-fine" : L"Fast block matching";
 }
 struct Settings {
-    MotionMethod motionMethod = MotionMethod::Fast;
+    MotionMethod motionMethod = MotionMethod::EchoStorm;
     bool enabled = false;
     bool amdBridge = false; // Experimental AMDLSS5: dispatch FSR even at 1:1 resolution.
     bool FsrNative() const { return amdBridge && upscaler == processing::Upscaler::Fsr; }
     int intensity = 50;
     NrStage nrStage = NrStage::BeforeUpscale;
     processing::Upscaler upscaler = processing::Upscaler::Dlss;
-    processing::FrameGenerator frameGenerator = processing::FrameGenerator::Dlss;
+    processing::FrameGenerator frameGenerator = processing::FrameGenerator::EchoStorm;
+    bool echoPipeline = true;
+    bool dlssFgGuard = true; // Output guard; off exposes SDK-generated frames for comparison.
     void ToggleUpscaling(processing::Upscaler& previous) {
         if (upscaler != processing::Upscaler::Off) {
             previous = upscaler;
@@ -37,6 +39,7 @@ struct Settings {
     unsigned frameMultiplier = 1;
     // Present DLSS / FSR generated frames from a dedicated thread with a queued schedule.
     bool presentThread = true;
+    bool limitGenerationToDisplay = false;
     bool operator==(const Settings&) const = default;
     static Settings Load();
     long Save() const;

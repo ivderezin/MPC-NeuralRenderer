@@ -384,7 +384,9 @@ CDX11VideoProcessor::CDX11VideoProcessor(CMpcVideoRenderer* pFilter, const Setti
 	: CVideoProcessor(pFilter)
 {
 	m_processingSettings = neural::Settings::Load();
-	m_neuralPass.Configure(m_processingSettings);
+	auto stageSettings=m_processingSettings;
+	if (stageSettings.echoPipeline) stageSettings.enabled=false;
+	m_neuralPass.Configure(stageSettings);
 	m_bShowStats           = config.bShowStats;
 	m_iResizeStats         = config.iResizeStats;
 	m_iTexFormat           = config.iTexFormat;
@@ -680,6 +682,7 @@ void CDX11VideoProcessor::ReleaseVP()
 {
 	StopMfgPresentation();
 	m_neuralPass.ClearHistory();
+	m_echoNr.Invalidate();
 	m_xessPresenter.ClearHistory();
 	DLog(L"CDX11VideoProcessor::ReleaseVP()");
 
@@ -713,6 +716,7 @@ void CDX11VideoProcessor::ReleaseVP()
 void CDX11VideoProcessor::ReleaseDevice()
 {
 	StopMfgPresentation();
+	m_echoNr.Reset();
 	m_TexNeural.Release();
 	m_neuralPass.ResetDevice();
 	DLog(L"CDX11VideoProcessor::ReleaseDevice()");
@@ -802,6 +806,8 @@ void CDX11VideoProcessor::ReleaseDevice()
 
 void CDX11VideoProcessor::ReleaseSwapChain()
 {
+	m_displayCadence.Reset();
+	m_echoPresentationClock.Reset();
 	StopMfgPresentation();
 	if (m_pDXGISwapChain1 && !m_xessPresenter.Active()) {
 		m_pDXGISwapChain1->SetFullscreenState(FALSE, nullptr);
@@ -1843,7 +1849,8 @@ HRESULT CDX11VideoProcessor::InitSwapChain(bool bWindowChanged)
 				hr = m_xessPresenter.Create(m_pDevice, m_pDeviceContext, m_pDXGIFactory2, m_hWnd, desc1,
 					m_processingSettings.frameMultiplier, m_neuralRefreshHz,
 					static_cast<float>(m_rtAvgTimePerFrame > 0 ? m_rtAvgTimePerFrame : 166667) / 10000.0f,
-					processing::ModuleDirectory(), &m_pDXGISwapChain1, m_processingSettings.motionMethod == neural::MotionMethod::EchoStorm);
+					processing::ModuleDirectory(), &m_pDXGISwapChain1, m_processingSettings.motionMethod == neural::MotionMethod::EchoStorm,
+					m_processingSettings.limitGenerationToDisplay);
 				if (SUCCEEDED(hr)) desc1.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 			} catch (...) { hr = E_FAIL; }
 		}
@@ -3119,13 +3126,15 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 			m_mfgPlan.Clear(); m_mfgSerial = outputSerial;
 			LARGE_INTEGER now{}, frequency{};
 			QueryPerformanceCounter(&now); QueryPerformanceFrequency(&frequency);
-			const auto duration = static_cast<long long>(static_cast<double>(m_neuralPass.OutputDuration()) * frequency.QuadPart / 10000000.0);
+			auto duration = static_cast<long long>(static_cast<double>(m_neuralPass.OutputDuration()) * frequency.QuadPart / 10000000.0);
+			if (m_processingSettings.echoPipeline) duration=m_echoPresentationClock.SmoothDuration(duration,static_cast<double>(frequency.QuadPart));
 			if (m_processingSettings.presentThread) {
 				bool queued;
 				{
 					std::lock_guard lock(m_mfgQueueLock);
 					queued = m_mfgQueue.Add(now.QuadPart, duration, generatedCount, m_neuralRefreshHz,
-						static_cast<double>(frequency.QuadPart), outputSerial);
+							static_cast<double>(frequency.QuadPart), outputSerial, &m_mfgCounters.skipped,
+							m_processingSettings.limitGenerationToDisplay,m_processingSettings.echoPipeline ? &m_echoPresentationClock : nullptr);
 					if (!queued) m_mfgQueue.Clear();
 				}
 				m_mfgActive = queued;
@@ -3138,7 +3147,8 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 					catch (...) { StopMfgPresentation(); }
 				}
 			} else {
-				m_mfgPlan.Start(now.QuadPart,duration,generatedCount,m_neuralRefreshHz,static_cast<double>(frequency.QuadPart));
+				m_mfgPlan.Start(now.QuadPart,duration,generatedCount,m_neuralRefreshHz,static_cast<double>(frequency.QuadPart),
+					m_processingSettings.limitGenerationToDisplay,m_processingSettings.echoPipeline ? &m_echoPresentationClock : nullptr);
 				m_mfgActive = m_mfgPlan.Pending()
 					&& GetPropW(m_pFilter->m_hWndParentMain,L"MPCNeuralRenderer.This") == m_pFilter;
 				if (m_mfgActive) {
@@ -3151,6 +3161,9 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 	} else if (m_mfgActive) StopMfgPresentation();
 
 	if (!m_pPSHalfOUtoInterlace) {
+		if (m_processingSettings.echoPipeline && m_processingSettings.enabled && !m_processingSuspended)
+			m_echoNr.Compose(m_pDeviceContext,pBackBuffer,m_videoRect,
+				m_neuralPass.OutputSerial() ? m_neuralPass.OutputTimestamp() : m_neuralFrameTimestamp,false,m_pipelineRotation,m_bFlip);
 		DrawSubtitles(pBackBuffer);
 	}
 
@@ -3252,7 +3265,18 @@ HRESULT CDX11VideoProcessor::PresentFrame(unsigned syncInterval, bool running)
 		hr = m_xessPresenter.Present(syncInterval, running && !m_processingSuspended, token,
 			static_cast<float>(duration > 0 ? duration : 166667) / 10000.0f);
 	}
-	if (hr == S_OK) m_outputStats.Add(GetPreciseTick());
+	if (hr == S_OK) {
+		m_outputStats.Add(GetPreciseTick());
+		if ((m_bShowStats || m_processingSettings.echoPipeline) && !m_xessPresenter.Active()) {
+			DXGI_FRAME_STATISTICS stats{};
+			if (m_pDXGISwapChain1->GetFrameStatistics(&stats) == S_OK) {
+				LARGE_INTEGER frequency{};
+				QueryPerformanceFrequency(&frequency);
+				m_displayCadence.Observe(stats.PresentCount, stats.SyncQPCTime.QuadPart, frequency.QuadPart);
+				m_echoPresentationClock.Observe(stats.SyncRefreshCount,stats.SyncQPCTime.QuadPart,static_cast<double>(frequency.QuadPart));
+			} else m_displayCadence.Reset();
+		}
+	}
 	return hr;
 }
 
@@ -3267,7 +3291,7 @@ void CDX11VideoProcessor::StopMfgPresentation()
 	m_mfgThread.Wake();
 }
 
-HRESULT CDX11VideoProcessor::DrawPresentationFrame(ID3D11Texture2D* frame)
+HRESULT CDX11VideoProcessor::DrawPresentationFrame(ID3D11Texture2D* frame,long long timestamp,bool generated)
 {
 	Tex2D_t texture;
 	texture.pTexture = frame; frame->GetDesc(&texture.desc);
@@ -3280,6 +3304,8 @@ HRESULT CDX11VideoProcessor::DrawPresentationFrame(ID3D11Texture2D* frame)
 		const float black[4] = {0,0,0,1}; m_pDeviceContext->ClearRenderTargetView(target,black);
 	}
 	hr = DrawProcessedTexture(texture,backBuffer,CRect(0,0,texture.desc.Width,texture.desc.Height),m_videoRect,m_pipelineRotation);
+	if (SUCCEEDED(hr) && m_processingSettings.echoPipeline && m_processingSettings.enabled)
+		m_echoNr.Compose(m_pDeviceContext,backBuffer,m_videoRect,timestamp,generated,m_pipelineRotation,m_bFlip);
 	if (SUCCEEDED(hr)) DrawSubtitles(backBuffer);
 	if (SUCCEEDED(hr)) DrawProcessingMessage(backBuffer);
 	if (SUCCEEDED(hr) && m_bShowStats) DrawStats(backBuffer);
@@ -3309,7 +3335,8 @@ void CDX11VideoProcessor::PresentGeneratedFrames()
 	const int index = m_mfgPlan.TakeDue(now.QuadPart, &m_mfgCounters.skipped);
 	if (index >= 0) {
 		auto* frame = m_neuralPass.PresentationFrame(m_mfgSerial, static_cast<unsigned>(index));
-		const HRESULT hr = frame ? DrawPresentationFrame(frame) : E_FAIL;
+		const HRESULT hr = frame ? DrawPresentationFrame(frame,m_neuralPass.PresentationTimestamp(m_mfgSerial,static_cast<unsigned>(index)),
+			static_cast<unsigned>(index)<m_neuralPass.GeneratedCount()) : E_FAIL;
 		if (FAILED(hr)) { StopMfgPresentation(); return; }
 		if (static_cast<unsigned>(index) < m_neuralPass.GeneratedCount()) m_mfgCounters.generated++;
 		else m_mfgCounters.real++;
@@ -3347,7 +3374,7 @@ bool CDX11VideoProcessor::PresentQueuedFrame()
 	}
 	auto* texture = m_neuralPass.PresentationFrame(frame->batch, frame->texture);
 	if (!texture) { m_mfgCounters.skipped++; return true; } // batch already overwritten
-	if (FAILED(DrawPresentationFrame(texture))) { StopMfgPresentation(); return true; }
+	if (FAILED(DrawPresentationFrame(texture,m_neuralPass.PresentationTimestamp(frame->batch,frame->texture),!frame->real))) { StopMfgPresentation(); return true; }
 	if (frame->real) m_mfgCounters.real++;
 	else m_mfgCounters.generated++;
 	return true;
@@ -3386,6 +3413,7 @@ void CDX11VideoProcessor::ToggleProcessingSuspended()
 	StopMfgPresentation();
 	m_processingSuspended = !m_processingSuspended;
 	m_neuralPass.ClearHistory();
+	m_echoNr.Invalidate();
 	m_xessPresenter.ClearHistory();
 	UpdateTexures(); // D3D11 VP may scale directly again while processing is suspended
 	ShowProcessingMessage(m_processingSuspended ? L"Neural processing: off" : L"Neural processing: on");
@@ -3956,9 +3984,11 @@ HRESULT CDX11VideoProcessor::Process(ID3D11Texture2D* pRenderTarget, const CRect
     }
 
 	if (bNeural) {
+		m_echoNr.Submit(m_pDevice,m_pDeviceContext,pInputTexture->pTexture,rSrc,m_neuralFrameTimestamp,
+			m_pDXGISwapChain4!=nullptr,m_processingSettings);
 		if (auto* texture = m_neuralPass.Process(m_pDevice, m_pDeviceContext, pInputTexture->pTexture, rSrc, m_neuralFrameTimestamp, m_pDXGISwapChain4 != nullptr,
 			dstRect.Size(), m_neuralMonitorSize, m_neuralRefreshHz,
-			static_cast<float>(m_rtAvgTimePerFrame > 0 ? m_rtAvgTimePerFrame : 166667) / 10000.0f)) {
+			static_cast<float>(m_rtAvgTimePerFrame > 0 ? m_rtAvgTimePerFrame : 166667) / 10000.0f, m_bShowStats)) {
 			if (m_TexNeural.pTexture != texture) {
 				m_TexNeural.Release();
 				if (SUCCEEDED(m_pDevice->CreateShaderResourceView(texture, nullptr, &m_TexNeural.pShaderResource))) {
@@ -4513,6 +4543,7 @@ void CDX11VideoProcessor::Configure(const Settings_t& config)
 	// Start presentation statistics afresh so each configuration can be compared on its own.
 	m_mfgCounters = {};
 	m_outputStats.Reset();
+	m_displayCadence.Reset();
 	m_mfgThread.ResetRetries();
 	framegen::PresentationTimer::ResetRetryCount();
 	const bool neuralWasEnabled = m_neuralPass.Enabled();
@@ -4522,9 +4553,16 @@ void CDX11VideoProcessor::Configure(const Settings_t& config)
 		|| m_processingSettings.frameGenerator == processing::FrameGenerator::Xess)
 		&& (previousProcessing.frameGenerator != m_processingSettings.frameGenerator
 			|| previousProcessing.frameMultiplier != m_processingSettings.frameMultiplier
-            || previousProcessing.motionMethod != m_processingSettings.motionMethod);
-	m_neuralPass.Configure(m_processingSettings);
-	m_neuralPass.ClearHistory();
+            || previousProcessing.motionMethod != m_processingSettings.motionMethod
+            || previousProcessing.limitGenerationToDisplay != m_processingSettings.limitGenerationToDisplay);
+	auto stageSettings=m_processingSettings;
+	if (stageSettings.echoPipeline) stageSettings.enabled=false;
+	auto previousStage=previousProcessing;
+	if (previousStage.echoPipeline) previousStage.enabled=false;
+	if (previousProcessing.echoPipeline!=m_processingSettings.echoPipeline || !m_processingSettings.enabled) m_echoNr.Reset();
+	m_neuralPass.Configure(stageSettings);
+	auto historySettings=stageSettings; historySettings.dlssFgGuard=previousStage.dlssFgGuard;
+	if (historySettings!=previousStage) m_neuralPass.ClearHistory();
 	m_xessPresenter.ClearHistory();
 	const bool changeNeural = neuralWasEnabled != m_neuralPass.Enabled();
 	bool changeWindow            = changePresenter;
@@ -4823,6 +4861,7 @@ void CDX11VideoProcessor::Flush()
 {
 	StopMfgPresentation();
 	m_neuralPass.ClearHistory();
+	m_echoNr.Invalidate();
 	m_xessPresenter.ClearHistory();
 	if (m_D3D11VP.IsReady()) {
 		m_D3D11VP.ResetFrameOrder();
@@ -4846,6 +4885,7 @@ void CDX11VideoProcessor::ClearPreScaleShaders()
 	for (auto& texture : m_TexPreScale) texture.Release();
 	for (auto& texture : m_TexNeuralColour) texture.Release();
 	m_neuralPass.ClearHistory();
+	m_echoNr.Invalidate();
 	DLog(L"CDX11VideoProcessor::ClearPreScaleShaders().");
 }
 
@@ -4874,6 +4914,7 @@ HRESULT CDX11VideoProcessor::AddPreScaleShader(const std::wstring& name, const s
 			m_pPreScaleShaders.back().name = name;
 			UpdateTexures();
 			m_neuralPass.ClearHistory();
+	m_echoNr.Invalidate();
 			DLog(L"CDX11VideoProcessor::AddPreScaleShader() : \"{}\" pixel shader added successfully.", name);
 		}
 		else {
@@ -5131,14 +5172,22 @@ HRESULT CDX11VideoProcessor::DrawStats(ID3D11Texture2D* pRenderTarget)
 	str.assign(m_strStatsHeader);
 	str.append(m_processingSuspended ? std::wstring(L"\nNeural processing: suspended (Ctrl+Alt+R)")
 		: L"\n" + m_neuralPass.Status());
+	if (m_processingSettings.echoPipeline && m_processingSettings.enabled && !m_processingSuspended)
+		str += L"\n"+m_echoNr.Status();
 	if (m_processingSettings.frameGenerator == processing::FrameGenerator::Xess && m_processingSettings.frameMultiplier > 1) {
 		str += L"\n" + (m_xessPresenter.Status().empty()
 			? std::wstring(L"XeSS FG: requires windowed SDR / 8-bit output") : m_xessPresenter.Status());
 	}
-	str += std::format(L"\nOutput: {:.1f} fps (all presents)", m_outputStats.GetAverageFps());
+	str += std::format(L"\nOutput: {:.1f} fps (Present calls)", m_outputStats.GetAverageFps());
+	str += m_displayCadence.Available()
+		? std::format(L", DXGI shown: {:.1f} fps", m_displayCadence.Fps())
+		: L", DXGI shown: unavailable";
+	if (m_processingSettings.frameMultiplier > 1)
+		str += m_processingSettings.limitGenerationToDisplay
+			? L"\nFG monitor refresh cap: on" : L"\nFG monitor refresh cap: off";
 	if (m_mfgActive || m_mfgCounters.generated || m_mfgCounters.stops) {
 		const bool thread = m_processingSettings.presentThread;
-		str += std::format(L"\nMFG presents ({}): generated {}, real {}, late-skipped {}, plan stops {}, lock retries {}",
+		str += std::format(L"\nMFG presents ({}): generated {}, real {}, skipped {}, plan stops {}, lock retries {}",
 			thread ? L"thread" : L"UI timer", m_mfgCounters.generated, m_mfgCounters.real, m_mfgCounters.skipped,
 			m_mfgCounters.stops, thread ? m_mfgThread.Retries() : framegen::PresentationTimer::RetryCount());
 	}

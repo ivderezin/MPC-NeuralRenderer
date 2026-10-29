@@ -4,8 +4,12 @@
 #include "FrameHistory.h"
 #include "AsyncOutput.h"
 #include "MotionShaders.h"
-#include "MotionEstimator.h"
+#include "../FrameGeneration/EchoFrameGeneration.h"
+#include "MotionRepair.h"
+#include "../FrameGeneration/FrameContentProbe.h"
+#include "../FrameGeneration/ExactInputRepeat.h"
 #include "../Upscaling/UpscaleStage.h"
+#include "../Upscaling/ProviderSelection.h"
 #include "../FrameGeneration/GenerationStage.h"
 #include "../FrameGeneration/GenerationPolicy.h"
 #include "../Processing/HdrComposite.h"
@@ -24,6 +28,7 @@
 #include <stdexcept>
 #include <nvsdk_ngx.h>
 #include "../Ngx/Feature.h"
+#include "../EchoStorm/engine/ngx_users.h"
 
 #pragma comment(lib, "nvsdk_ngx_s.lib")
 
@@ -227,9 +232,18 @@ struct NeuralPass::Impl {
     ComPtr<ID3D11ComputeShader> prepare, motion, scaleMotion;
     ComPtr<ID3D11Buffer> constants, scaleConstants;
     SharedTexture color, output, vectors, depth, distrust;
-    MotionEstimator echoMotion;
+    framegen::EchoFrameGeneration echoMotion;
+    neural::MotionRepair motionRepair;
+    SharedTexture repairedVectors, upscaleDistrust;
     FrameHistory history;
+    framegen::FrameContentProbe contentProbe;
+    framegen::ExactInputRepeat repeatGate;
+    unsigned long long repeatedInputs=0;
+    long long lastDistinctTimestamp=0;
+    bool haveDistinctTimestamp=false;
+    bool diagnosticsEnabled = false, diagnosticsFailed = false;
     Settings options;
+    processing::Upscaler activeUpscaler=processing::Upscaler::Off;
     upscaling::Extent target{}, monitor{};
     double refreshHz = 60;
     upscaling::UpscaleStage superResolution;
@@ -251,6 +265,8 @@ struct NeuralPass::Impl {
     std::array<std::array<ComPtr<ID3D11Texture2D>, 3>, 2> displayGenerated;
     std::array<unsigned long long, 2> slotSerial{};
     std::array<unsigned, 2> slotGenerated{};
+    std::array<long long,2> slotTimestamp{},slotDuration{};
+    long long pendingTimestamp=0,outputTimestamp=0;
     ID3D11Texture2D* published = nullptr;
     ID3D11Texture2D* pendingReal = nullptr;
     bool pendingScaled = false, pendingHasFG = false;
@@ -291,7 +307,7 @@ struct NeuralPass::Impl {
         }
         if (snippetInitialized && shutdown)
             CallShutdown(shutdown, device12.Get());
-        if (coreInitialized)
+        if (coreInitialized && nr::ngxusers::Leaving())
             NVSDK_NGX_D3D12_Shutdown1(device12.Get());
         if (lease)
             SessionActive.clear();
@@ -305,6 +321,8 @@ struct NeuralPass::Impl {
         return completed;
     }
     void Invalidate() {
+        contentProbe.Invalidate();
+        repeatGate.Invalidate(); haveDistinctTimestamp=false;
         history.Clear();
         asyncOutput.Invalidate();
         lastCompletion = {};
@@ -340,7 +358,7 @@ struct NeuralPass::Impl {
     }
     std::wstring Status() const {
         std::wostringstream message;
-        message << L"Motion: " << neural::Name(options.motionMethod) << L"\n";
+        message << L"Motion: " << neural::Name(options.motionMethod) << (options.motionMethod==MotionMethod::EchoStorm ? L" (native D3D12)" : L"") << L"\n";
         if (hdr) message << L"HDR: PQ / BT.2020, SDR proxy + linear-light residual, 10-bit output\n";
         if (options.enabled) {
             if (!nrUsable && !nrPostUsable)
@@ -356,8 +374,8 @@ struct NeuralPass::Impl {
                     message << L" (after-upscaling pass: " << nrPostFailure << L")";
             }
         } else
-            message << L"NR: Off";
-        message << L"\n" << processing::Name(options.upscaler) << L" upscaling: ";
+            message << (options.echoPipeline ? L"NR stage: independent presentation composition" : L"NR: Off");
+        message << L"\n" << processing::Name(activeUpscaler) << L" upscaling: ";
         if (srUsable)
             message << width << L"x" << height << L" -> " << target.width << L"x" << target.height;
         else if (!srFailure.empty())
@@ -367,6 +385,10 @@ struct NeuralPass::Impl {
                                                                         : L"Off");
         if (options.FsrNative())
             message << L" (AMDLSS5 bridge inputs; external NR unverified)";
+        if(activeUpscaler==processing::Upscaler::Fsr && options.upscaler==processing::Upscaler::Dlss)
+            message << L" (automatic fallback: DLSS unavailable)";
+        if (options.ManualGeneration() && options.frameGenerator == processing::FrameGenerator::Dlss && options.motionMethod == MotionMethod::EchoStorm)
+            message << L"\nDLSS FG guidance: native EchoStorm, final-frame resolution";
         if (options.frameGenerator != processing::FrameGenerator::Xess) {
             message << L"\n" << processing::Name(options.frameGenerator) << L": ";
             if (fgUsable && fgLimitedByDisplay)
@@ -378,10 +400,27 @@ struct NeuralPass::Impl {
             else
                 message << (options.ManualGeneration() ? fgFailure : L"Off");
         }
+        if (options.frameGenerator==processing::FrameGenerator::Dlss && options.ManualGeneration())
+            message << (options.dlssFgGuard ? L"\nDLSS post-FG guard: on" : L"\nDLSS post-FG guard: off (SDK output)");
         if (asyncOutput.Available())
             message << std::fixed << std::setprecision(1) << L"\nProcessing: " << completedFps << L" fps, GPU "
                     << gpuMilliseconds << L" ms, prepare " << preparationMilliseconds << L" ms (async), init "
                     << initMilliseconds << L" ms";
+        if (options.frameGenerator==processing::FrameGenerator::Dlss && !frameGeneration.RuntimeStatus().empty())
+            message << L"\n" << frameGeneration.RuntimeStatus() << L"\nDLSS FG: finite flat-depth / orthographic capture fallback";
+        if (options.echoPipeline) message << L"\nExact repeated input batches suppressed: " << repeatedInputs;
+        if (diagnosticsEnabled && contentProbe.metrics.samples) {
+            const auto& data=contentProbe.metrics;
+            message << std::fixed << std::setprecision(3) << L"\nContent samples: raw delta " << data.delta[0]
+                    << L", real delta " << data.delta[1] << L" /255; unchanged input "
+                    << data.unchangedInputs << L"/" << data.samples;
+            if (data.generated) {
+                message << L"\nFG sampled delta (current/previous real): ";
+                for (unsigned i=0;i<data.generated;++i)
+                    message << (i ? L", " : L"") << data.delta[2+i*2] << L"/" << data.delta[3+i*2];
+            }
+        } else if (diagnosticsEnabled && diagnosticsFailed)
+            message << L"\nContent samples: unavailable (probe failed; processing unchanged)";
         return message.str();
     }
     void Begin() {
@@ -471,9 +510,14 @@ struct NeuralPass::Impl {
         color.Create(device, device12.Get(), width, height, DXGI_FORMAT_R8G8B8A8_UNORM);
         output.Create(device, device12.Get(), width, height, DXGI_FORMAT_R8G8B8A8_UNORM);
         vectors.Create(device, device12.Get(), width, height, DXGI_FORMAT_R16G16_FLOAT);
+        if (options.motionMethod == MotionMethod::EchoStorm || options.ManualGeneration()) {
+            repairedVectors.Create(device, device12.Get(), width, height, DXGI_FORMAT_R16G16_FLOAT);
+            if (options.motionMethod == MotionMethod::Fast) motionRepair.Initialize(device, width, height);
+        }
         if (options.motionMethod == MotionMethod::EchoStorm) {
             distrust.Create(device, device12.Get(), width, height, DXGI_FORMAT_R8_UNORM);
-            echoMotion.Initialize(device, width, height);
+            upscaleDistrust.Create(device, device12.Get(), width, height, DXGI_FORMAT_R8_UNORM);
+            echoMotion.Create(device12.Get(), width, height, false, true);
         }
         depth.Create(device, device12.Get(), width, height, DXGI_FORMAT_R32_FLOAT);
         color.texture->GetDesc(&desc);
@@ -527,6 +571,7 @@ struct NeuralPass::Impl {
                                                              cache.c_str(), device12.Get(), &info),
                          "Initialize driver NGX");
                 coreInitialized = true;
+                nr::ngxusers::Joined();
             } catch (const std::exception& error) {
                 ngxFailure = ngx::Message(error);
             }
@@ -554,12 +599,18 @@ struct NeuralPass::Impl {
                 nrFailure = ngx::Message(error);
             }
         }
+        bool dlssAvailable=false;
+        if(options.upscaler==processing::Upscaler::Dlss && coreInitialized) {
+            NVSDK_NGX_Parameter* capabilities=nullptr;int available=0;
+            if(NVSDK_NGX_D3D12_GetCapabilityParameters(&capabilities)==NVSDK_NGX_Result_Success && capabilities &&
+               capabilities->Get(NVSDK_NGX_Parameter_SuperSampling_Available,&available)==NVSDK_NGX_Result_Success)
+                dlssAvailable=available!=0;
+        }
+        activeUpscaler=upscaling::AvailableProvider(options.upscaler,dlssAvailable);
         if ((options.upscaler != processing::Upscaler::Off) &&
             (upscaling::ShouldUpscale({width, height}, target, monitor) || options.FsrNative())) {
             try {
                 scaled.Create(device, device12.Get(), target.width, target.height, DXGI_FORMAT_R8G8B8A8_UNORM);
-                if (options.upscaler == processing::Upscaler::Dlss && !coreInitialized)
-                    throw std::runtime_error(std::string(ngxFailure.begin(), ngxFailure.end()));
                 auto runtimeDirectory = directory;
                 if (options.FsrNative()) {
                     std::array<wchar_t, 32768> executable{};
@@ -570,8 +621,11 @@ struct NeuralPass::Impl {
                     if (std::filesystem::exists(playerDirectory / L"amd_fidelityfx_upscaler_dx12.dll"))
                         runtimeDirectory = playerDirectory;
                 }
-                superResolution.Create(options.upscaler, device12.Get(), list.Get(), {width, height}, target,
-                                       runtimeDirectory);
+                activeUpscaler=upscaling::CreateWithFallback(options.upscaler,dlssAvailable,[&](processing::Upscaler provider) {
+                    activeUpscaler=provider;
+                    superResolution.Create(provider, device12.Get(), list.Get(), {width, height}, target,
+                                           runtimeDirectory, options.motionMethod == MotionMethod::EchoStorm);
+                });
                 srUsable = true;
             } catch (const std::exception& error) {
                 srFailure = ngx::Message(error);
@@ -623,7 +677,7 @@ struct NeuralPass::Impl {
         if (options.frameGenerator == processing::FrameGenerator::Dlss && !coreInitialized)
             throw std::runtime_error("Driver NGX initialization failed");
         frameGeneration.Create(options.frameGenerator, device12.Get(), list.Get(), width, height, outWidth, outHeight,
-                               ModuleDirectory(), hdr);
+                               ModuleDirectory(), hdr, options.motionMethod == MotionMethod::EchoStorm, options.dlssFgGuard);
         for (unsigned i = 0; i < 3; ++i) {
             generated[i].Create(device11.Get(), device12.Get(), outWidth, outHeight, hdr ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM);
             for (auto& slot : displayGenerated)
@@ -714,8 +768,20 @@ struct NeuralPass::Impl {
             ngx::Transition(list.Get(), distrust.resource.Get(),
                 begin ? D3D12_RESOURCE_STATE_COMMON : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                 begin ? D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE : D3D12_RESOURCE_STATE_COMMON);
+        if (repairedVectors.resource)
+            ngx::Transition(list.Get(), repairedVectors.resource.Get(),
+                begin ? D3D12_RESOURCE_STATE_COMMON : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                begin ? D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE : D3D12_RESOURCE_STATE_COMMON);
+        if (upscaleDistrust.resource)
+            ngx::Transition(list.Get(), upscaleDistrust.resource.Get(),
+                begin ? D3D12_RESOURCE_STATE_COMMON : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                begin ? D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE : D3D12_RESOURCE_STATE_COMMON);
     }
     ID3D11Texture2D* Run(ID3D11Texture2D* frame, long long timestamp, float defaultFrameTimeMs) {
+        if (diagnosticsEnabled && !diagnosticsFailed) {
+            try { contentProbe.Collect(context11.Get()); }
+            catch (...) { diagnosticsFailed=true; }
+        }
         if (!nrUsable && !nrPostUsable && !srUsable && !fgUsable && !recreateFG) {
             asyncOutput.Invalidate();
             published = nullptr;
@@ -724,6 +790,7 @@ struct NeuralPass::Impl {
         }
         const auto action = history.Classify(timestamp);
         if (action == FrameHistory::Action::Reset) {
+            contentProbe.Invalidate();
             asyncOutput.Invalidate();
             published = nullptr;
             generatedCount = 0;
@@ -734,6 +801,11 @@ struct NeuralPass::Impl {
         if (asyncOutput.Collect(completed)) {
             // Already completed: acquire the shared resource without waiting for inference.
             Check(context11->Wait(fence11.Get(), submitted), "Acquire completed NR output");
+            const bool repeated=options.echoPipeline && repeatGate.Same(context11.Get());
+            if (repeated) {
+                if (pendingHasFG) frameGeneration.Collect();
+                ++repeatedInputs;
+            } else {
             ++serial;
             const auto slot = static_cast<size_t>(serial & 1);
             DisplayCopy(displayReal[slot], pendingReal);
@@ -744,10 +816,21 @@ struct NeuralPass::Impl {
                 ++discardedBatches;
             for (unsigned i = 0; i < generatedCount; ++i)
                 context11->CopyResource(displayGenerated[slot][i].Get(), generated[i].texture.Get());
+            if (diagnosticsEnabled && !diagnosticsFailed) {
+                std::array<ID3D11Texture2D*,3> probeFrames{};
+                for (unsigned i=0;i<generatedCount;++i) probeFrames[i]=displayGenerated[slot][i].Get();
+                try { contentProbe.Submit(context11.Get(), color.texture.Get(), published, probeFrames, generatedCount); }
+                catch (...) { diagnosticsFailed=true; }
+            }
             slotSerial[slot] = serial;
             slotGenerated[slot] = generatedCount;
+            slotTimestamp[slot] = pendingTimestamp;
+            slotDuration[slot] = pendingDuration;
+            outputTimestamp = pendingTimestamp;
             outputDuration = pendingDuration;
             ReadTiming();
+            lastDistinctTimestamp=pendingTimestamp;haveDistinctTimestamp=true;
+            }
         }
         if (action == FrameHistory::Action::Repeat)
             return asyncOutput.Available() ? published : nullptr;
@@ -762,10 +845,11 @@ struct NeuralPass::Impl {
             }
         }
         const float frameTimeMs =
-            !reset && timestamp > lastInputTimestamp
-                ? std::clamp(static_cast<float>(timestamp - lastInputTimestamp) / 10000.0f, 1.0f, 500.0f)
+            !reset && timestamp > (options.echoPipeline && haveDistinctTimestamp ? lastDistinctTimestamp : lastInputTimestamp)
+                ? std::clamp(static_cast<float>(timestamp - (options.echoPipeline && haveDistinctTimestamp ? lastDistinctTimestamp : lastInputTimestamp)) / 10000.0f, 1.0f, 500.0f)
                 : defaultFrameTimeMs;
         pendingDuration = static_cast<long long>(frameTimeMs * 10000.0f);
+        pendingTimestamp = timestamp;
         lastInputTimestamp = timestamp;
         const UINT data[] = {
             width, height, static_cast<UINT>(rect.left), static_cast<UINT>(rect.top), reset ? 1u : 0u, hdr ? 1u : 0u, 0, 0};
@@ -773,6 +857,7 @@ struct NeuralPass::Impl {
         context11->Begin(preparationClock.Get());
         context11->End(preparationStart.Get());
         context11->CopyResource(source.Get(), frame);
+        if (options.echoPipeline) repeatGate.Record(context11.Get(),source.Get(),sourceView.Get(),rect,reset);
         context11->UpdateSubresource(constants.Get(), 0, nullptr, data, 0, 0);
         ID3D11Buffer* cb[] = {constants.Get()};
         context11->CSSetConstantBuffers(0, 1, cb);
@@ -789,9 +874,7 @@ struct NeuralPass::Impl {
         context11->CSSetUnorderedAccessViews(0, 1, target, nullptr);
         if (reset)
             context11->CopyResource(previous.Get(), color.texture.Get());
-        if (options.motionMethod == MotionMethod::EchoStorm) {
-            echoMotion.Dispatch(context11.Get(), color.srv.Get(), vectors.uav.Get(), distrust.uav.Get(), reset);
-        } else {
+        if (options.motionMethod == MotionMethod::Fast) {
             input[0] = color.srv.Get();
             input[1] = previousView.Get();
             target[0] = vectors.uav.Get();
@@ -807,12 +890,18 @@ struct NeuralPass::Impl {
             context11->CSSetConstantBuffers(0, 1, cb);
             context11->CSSetShader(nullptr, nullptr, 0);
         }
-        if (nrPostUsable && srUsable) {
+        // Resolve flat/repeating patches before any temporal consumer uses the field.
+        if (repairedVectors.resource && options.motionMethod == MotionMethod::Fast)
+            motionRepair.Dispatch(context11.Get(), previousView.Get(), color.srv.Get(),
+                vectors.srv.Get(), distrust.srv.Get(), repairedVectors.uav.Get(), upscaleDistrust.uav.Get(),
+                srUsable ? static_cast<float>(width) * (this->target.width == width && this->target.height == height ? .001f : .0005f) : 0.f);
+        auto& temporalVectors = options.motionMethod == MotionMethod::EchoStorm ? repairedVectors : vectors;
+        if (nrPostUsable && srUsable && options.motionMethod == MotionMethod::Fast) {
             // The after-upscaling NR pass needs motion at the output resolution.
             const UINT scaleData[] = {width, height, this->target.width, this->target.height};
             context11->UpdateSubresource(scaleConstants.Get(), 0, nullptr, scaleData, 0, 0);
             ID3D11Buffer* scaleBuffer[] = {scaleConstants.Get()};
-            ID3D11ShaderResourceView* scaleInput[] = {vectors.srv.Get()};
+            ID3D11ShaderResourceView* scaleInput[] = {temporalVectors.srv.Get()};
             ID3D11UnorderedAccessView* scaleOutput[] = {postVectors.uav.Get()};
             context11->CSSetConstantBuffers(0, 1, scaleBuffer);
             context11->CSSetShader(scaleMotion.Get(), nullptr, 0);
@@ -836,13 +925,18 @@ struct NeuralPass::Impl {
         Check(queue->Wait(fence12.Get(), ready), "D3D12 wait");
         Transition(true);
         list->EndQuery(timingQueries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
+        if (options.motionMethod == MotionMethod::EchoStorm && (nrUsable || nrPostUsable || srUsable)) {
+            echoMotion.Dispatch(list.Get(),color.resource.Get(),{},0,reset);
+            const float fastMotion=srUsable ? static_cast<float>(width)*(this->target.width==width && this->target.height==height ? .001f : .0005f) : 0.f;
+            echoMotion.WriteGuidance(list.Get(),repairedVectors.resource.Get(),upscaleDistrust.resource.Get(),fastMotion);
+        }
         ID3D12Resource* finalColor = color.resource.Get();
         pendingReal = color.texture.Get();
         pendingScaled = false;
         pendingHasFG = false;
         bool outputRead = false;
         if (nrUsable) {
-            const auto result = EvaluateNr(nrPre, color.resource.Get(), output.resource.Get(), vectors.resource.Get(),
+            const auto result = EvaluateNr(nrPre, color.resource.Get(), output.resource.Get(), temporalVectors.resource.Get(),
                                            depth.resource.Get(), reset);
             if (result == NVSDK_NGX_Result_Success) {
                 ngx::Transition(list.Get(), output.resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
@@ -865,8 +959,8 @@ struct NeuralPass::Impl {
             ngx::Transition(list.Get(), scaled.resource.Get(), D3D12_RESOURCE_STATE_COMMON,
                             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             try {
-                superResolution.Dispatch(list.Get(), finalColor, depth.resource.Get(), vectors.resource.Get(),
-                                         scaled.resource.Get(), reset, frameTimeMs, distrust.resource.Get());
+                superResolution.Dispatch(list.Get(), finalColor, depth.resource.Get(), temporalVectors.resource.Get(),
+                                         scaled.resource.Get(), reset, frameTimeMs, upscaleDistrust.resource.Get());
                 ngx::Transition(list.Get(), scaled.resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 finalColor = scaled.resource.Get();
@@ -887,9 +981,9 @@ struct NeuralPass::Impl {
             postActive = true;
             ngx::Transition(list.Get(), postOutput.resource.Get(), D3D12_RESOURCE_STATE_COMMON,
                             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            for (auto* resource : {postVectors.resource.Get(), postDepth.resource.Get()})
-                ngx::Transition(list.Get(), resource, D3D12_RESOURCE_STATE_COMMON,
-                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            ngx::Transition(list.Get(),postVectors.resource.Get(),D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            if (options.motionMethod == MotionMethod::EchoStorm) echoMotion.WriteGuidance(list.Get(),postVectors.resource.Get());
+            ngx::Transition(list.Get(),postDepth.resource.Get(),D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             const auto result = EvaluateNr(nrPost, scaled.resource.Get(), postOutput.resource.Get(),
                                            postVectors.resource.Get(), postDepth.resource.Get(), reset);
             if (result == NVSDK_NGX_Result_Success) {
@@ -928,7 +1022,7 @@ struct NeuralPass::Impl {
         }
         if (fgUsable) {
             const auto count = framegen::GeneratedLimit(options.frameMultiplier, frameGeneration.MaxGenerated(),
-                                                        refreshHz, frameTimeMs);
+                                                        refreshHz, frameTimeMs, options.limitGenerationToDisplay);
             fgLimitedByDisplay = count == 0;
             if (count) {
                 std::array<ID3D12Resource*, 3> outputs{};
@@ -938,7 +1032,7 @@ struct NeuralPass::Impl {
                                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
                 }
                 try {
-                    frameGeneration.Dispatch(list.Get(), finalColor, depth.resource.Get(), vectors.resource.Get(),
+                    frameGeneration.Dispatch(list.Get(), finalColor, depth.resource.Get(), repairedVectors.resource.Get(),
                                              outputs, count, reset || fgNeedsReset, frameTimeMs);
                     pendingHasFG = true;
                     fgNeedsReset = false;
@@ -984,6 +1078,15 @@ unsigned long long NeuralPass::OutputSerial() const {
 long long NeuralPass::OutputDuration() const {
     return impl_ ? impl_->outputDuration : 0;
 }
+long long NeuralPass::OutputTimestamp() const { return impl_ ? impl_->outputTimestamp : 0; }
+long long NeuralPass::PresentationTimestamp(unsigned long long batch,unsigned index) const {
+    if (!impl_) return 0;
+    const auto slot=static_cast<size_t>(batch&1);
+    if (impl_->slotSerial[slot]!=batch) return 0;
+    const auto count=impl_->slotGenerated[slot];
+    const auto remaining=index<count ? count-index : 0;
+    return impl_->slotTimestamp[slot]-impl_->slotDuration[slot]*remaining/(count+1);
+}
 ID3D11Texture2D* NeuralPass::PresentationFrame(unsigned long long batch, unsigned index) const {
     if (!impl_ || !impl_->asyncOutput.Available())
         return nullptr;
@@ -1001,6 +1104,13 @@ void NeuralPass::Configure(Settings settings) {
     settings.presentThread = false; // presentation mode does not affect processing
     if (settings_ == settings)
         return;
+    auto resources=settings;
+    resources.dlssFgGuard=settings_.dlssFgGuard;
+    if (resources==settings_) {
+        settings_=settings;
+        if (impl_) { impl_->options.dlssFgGuard=settings.dlssFgGuard; impl_->frameGeneration.SetDlssGuard(settings.dlssFgGuard); }
+        return;
+    }
     settings_ = settings;
     ResetDevice();
 }
@@ -1015,7 +1125,7 @@ void NeuralPass::ClearHistory() {
 }
 ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture2D* frame,
                                      const RECT& rect, long long timestamp, bool hdr, SIZE targetSize, SIZE monitorSize,
-                                     double refreshHz, float frameTimeMs) {
+                                     double refreshHz, float frameTimeMs, bool diagnostics) {
     if (!Enabled())
         return nullptr;
     const upscaling::Extent requestedTarget{static_cast<unsigned>((std::max)(1L, targetSize.cx)),
@@ -1071,6 +1181,8 @@ ID3D11Texture2D* NeuralPass::Process(ID3D11Device* device, ID3D11DeviceContext* 
             impl_->initMilliseconds = 1000.0 * static_cast<double>(end.QuadPart - start.QuadPart) / frequency.QuadPart;
         }
         impl_->refreshHz = refreshHz;
+        if (impl_->diagnosticsEnabled != diagnostics) impl_->contentProbe.Invalidate();
+        impl_->diagnosticsEnabled=diagnostics;
         auto result = impl_->Run(frame, timestamp, frameTimeMs);
         status_ = impl_->Status();
         return result;
@@ -1101,7 +1213,7 @@ void NeuralPass::ResetDevice() {
 }
 void NeuralPass::ClearHistory() {}
 ID3D11Texture2D* NeuralPass::Process(ID3D11Device*, ID3D11DeviceContext*, ID3D11Texture2D*, const RECT&, long long,
-                                     bool, SIZE, SIZE, double, float) {
+                                     bool, SIZE, SIZE, double, float, bool) {
     return nullptr;
 }
 unsigned NeuralPass::GeneratedCount() const {
@@ -1113,6 +1225,8 @@ unsigned long long NeuralPass::OutputSerial() const {
 long long NeuralPass::OutputDuration() const {
     return 0;
 }
+long long NeuralPass::OutputTimestamp() const { return 0; }
+long long NeuralPass::PresentationTimestamp(unsigned long long,unsigned) const { return 0; }
 ID3D11Texture2D* NeuralPass::PresentationFrame(unsigned long long, unsigned) const {
     return nullptr;
 }

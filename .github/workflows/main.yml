@@ -27,10 +27,27 @@ jobs:
           name: MPC-NeuralRenderer-Windows-x64
           path: |
             _bin/Filter_x64/*.ax
+            _bin/Filter_x64/DLSS-FG-Replay.exe
             _bin/Filter_x64/*.dll
             _bin/Filter_x64/*LICENSE*
             _bin/Filter_x64/*.cmd
             _bin/Filter_x64/*.md
             _bin/Filter_x64/LICENSE.txt
             _bin/Filter_x64/docs/images/*.jpg
+            _bin/Filter_x64/docs/dlss-fg-investigation.md
+            _bin/Filter_x64/tools/replay/Replay-README.md
+          if-no-files-found: error
+      - name: Upload small update for existing installations
+        uses: actions/upload-artifact@v7
+        with:
+          name: MPC-NeuralRenderer-Update-x64
+          path: |
+            _bin/Filter_x64/*.ax
+            _bin/Filter_x64/nvngx.dll_mpc_echo_nr.dll
+            _bin/Filter_x64/DLSS-FG-Replay.exe
+            _bin/Filter_x64/*LICENSE*
+            _bin/Filter_x64/README.md
+            _bin/Filter_x64/Replay-README.md
+            _bin/Filter_x64/docs/dlss-fg-investigation.md
+            _bin/Filter_x64/tools/replay/Replay-README.md
           if-no-files-found: error
