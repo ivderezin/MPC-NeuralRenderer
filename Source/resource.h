@@ -171,6 +171,7 @@
 #define IDC_ECHO_PIPELINE               1085
 #define IDC_DLSS_FG_GUARD               1086
 #define IDC_DLSS_SAVE_SAMPLE            1087
+#define IDC_AMD_NR                     1088
 
 // Next default values for new objects
 // 
@@ -178,7 +179,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        106
 #define _APS_NEXT_COMMAND_VALUE         40001
-#define _APS_NEXT_CONTROL_VALUE         1088
+#define _APS_NEXT_CONTROL_VALUE         1089
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

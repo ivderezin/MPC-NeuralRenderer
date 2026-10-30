@@ -15,6 +15,8 @@ inline const wchar_t* Name(MotionMethod value) {
 struct Settings {
     MotionMethod motionMethod = MotionMethod::EchoStorm;
     bool enabled = false;
+    bool amdNr = false; // Optional external HIP/ZLUDA runtime, before upscaling.
+    bool IndependentNr() const { return echoPipeline && !amdNr; }
     bool amdBridge = false; // Experimental AMDLSS5: dispatch FSR even at 1:1 resolution.
     bool FsrNative() const { return amdBridge && upscaler == processing::Upscaler::Fsr; }
     int intensity = 50;

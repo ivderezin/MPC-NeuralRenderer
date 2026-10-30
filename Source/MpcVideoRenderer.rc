@@ -51,7 +51,7 @@ END
 // Dialog
 //
 
-IDD_MAINPROPPAGE DIALOGEX 0, 0, 352, 501
+IDD_MAINPROPPAGE DIALOGEX 0, 0, 352, 517
 STYLE DS_SETFONT | WS_CHILD
 FONT 8, "MS Shell Dlg", 400, 0, 0x0
 BEGIN
@@ -115,7 +115,7 @@ BEGIN
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,178,230,151,10
     PUSHBUTTON      "Default",IDC_BUTTON1,305,243,37,14
     EDITTEXT        IDC_EDIT2,76,262,266,12,ES_READONLY | NOT WS_BORDER,WS_EX_RIGHT
-    GROUPBOX        "GPU processing (x64)",IDC_STATIC,5,277,342,171
+    GROUPBOX        "GPU processing (x64)",IDC_STATIC,5,277,342,187
     CONTROL         "Enable neural rendering",IDC_NEURAL_ENABLED,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,289,116,10
     LTEXT           "Intensity:",IDC_STATIC,180,290,38,8
     COMBOBOX        IDC_NEURAL_INTENSITY,224,287,62,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
@@ -135,11 +135,12 @@ BEGIN
     CONTROL         "EchoStorm independent NR / compose at presentation",IDC_ECHO_PIPELINE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,415,330,10
     CONTROL         "DLSS FG: protect interpolation (off = SDK output)",IDC_DLSS_FG_GUARD,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,431,224,10
     PUSHBUTTON      "Save DLSS FG sample",IDC_DLSS_SAVE_SAMPLE,240,428,102,14
-    GROUPBOX        "Pixel shaders (D3D11, current session; applied immediately)",IDC_STATIC,5,453,342,42
-    PUSHBUTTON      "Add pre-resize...",IDC_SHADER_PRE_ADD,10,467,97,14
-    PUSHBUTTON      "Clear",IDC_SHADER_PRE_CLEAR,110,467,43,14
-    PUSHBUTTON      "Add post-resize...",IDC_SHADER_POST_ADD,180,467,97,14
-    PUSHBUTTON      "Clear",IDC_SHADER_POST_CLEAR,280,467,43,14
+    CONTROL         "AMD NR runtime (experimental, before upscaling)",IDC_AMD_NR,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,447,330,10
+    GROUPBOX        "Pixel shaders (D3D11, current session; applied immediately)",IDC_STATIC,5,469,342,42
+    PUSHBUTTON      "Add pre-resize...",IDC_SHADER_PRE_ADD,10,483,97,14
+    PUSHBUTTON      "Clear",IDC_SHADER_PRE_CLEAR,110,483,43,14
+    PUSHBUTTON      "Add post-resize...",IDC_SHADER_POST_ADD,180,483,97,14
+    PUSHBUTTON      "Clear",IDC_SHADER_POST_CLEAR,280,483,43,14
 
 END
 

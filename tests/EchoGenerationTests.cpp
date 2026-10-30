@@ -15,6 +15,7 @@
 #include <cstring>
 #include <cmath>
 #include <iostream>
+#include <functional>
 using Microsoft::WRL::ComPtr;
 using processing::CheckHr;
 using processing::Transition;
@@ -45,8 +46,9 @@ struct Gpu12 {
         d.Height=1; d.DepthOrArraySize=1; d.MipLevels=1; d.SampleDesc.Count=1;d.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         ComPtr<ID3D12Resource> r;CheckHr(device->CreateCommittedResource(&h,D3D12_HEAP_FLAG_NONE,&d,state,nullptr,IID_PPV_ARGS(&r)),"buffer");return r;
     }
-    void Finish() {
+    void Finish(const std::function<void()>& afterSubmit={}) {
         CheckHr(list->Close(),"close");ID3D12CommandList* commands[]={list.Get()};queue->ExecuteCommandLists(1,commands);
+        if(afterSubmit)afterSubmit();
         CheckHr(queue->Signal(fence.Get(),++value),"signal");CheckHr(fence->SetEventOnCompletion(value,event),"event");
         Require(WaitForSingleObject(event,30000)==WAIT_OBJECT_0,"test GPU timeout");uploads.clear();
         CheckHr(alloc->Reset(),"reset allocator");CheckHr(list->Reset(alloc.Get(),nullptr),"reset list");
@@ -85,6 +87,7 @@ struct Gpu12 {
         D3D12_RANGE none{0,0};read->Unmap(0,&none);return result;
     }
 };
+#include "AmdNrIntegrationTests.h"
 std::vector<unsigned char> ReadPng(const std::filesystem::path& path,UINT w,UINT h) {
     ComPtr<IWICImagingFactory> factory;ComPtr<IWICBitmapDecoder> decoder;ComPtr<IWICBitmapFrameDecode> frame;ComPtr<IWICFormatConverter> converter;
     CheckHr(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),"test WIC factory");
@@ -236,6 +239,7 @@ int main() {
     try {
         Gpu12 gpu;
         TestSampleCapture(gpu);
+        TestAmdNr(gpu);
         TestDlssMotionImpulses(gpu);
         constexpr unsigned w=128,h=64;
         std::vector<unsigned char> a(w*h*4),b(a.size());

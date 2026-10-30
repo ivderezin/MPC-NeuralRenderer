@@ -90,7 +90,7 @@ void EchoNr::Invalidate() {
 }
 void EchoNr::Submit(ID3D11Device* device,ID3D11DeviceContext* context,ID3D11Texture2D* frame,
                     const RECT& rect,long long timestamp,bool hdr,const Settings& settings) {
-    if (!settings.enabled || !settings.echoPipeline) return;
+    if (!settings.enabled || !settings.IndependentNr()) return;
     try {
         if (impl_ && impl_->device.Get()!=device) Reset();
         if (!impl_) { impl_=std::make_unique<Impl>(); impl_->Start(device); }

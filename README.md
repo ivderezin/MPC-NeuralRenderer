@@ -9,6 +9,7 @@
 ### Возможности
 
 - **Нейрорендеринг NVIDIA:** интенсивность 0–200%, независимая обработка с наложением результата при показе или обработка до/после апскейла.
+- **AMD NR:** опциональный экспериментальный HIP/ZLUDA-бэкенд перед апскейлом. [Установка runtime](docs/amd-nr.md).
 - **Апскейл:** DLSS SR, FSR 3.1, XeSS. При недоступном DLSS автоматически используется FSR.
 - **Генерация кадров:** EchoFG — по умолчанию; также доступны DLSS MFG, FSR FG и XeSS FG. EchoFG поддерживает 2x / 3x / 4x, FSR FG — 2x; возможности DLSS/XeSS зависят от GPU и драйвера.
 - **Оценка движения:** EchoStorm coarse-to-fine — по умолчанию; Fast block matching — облегчённый вариант.
@@ -19,7 +20,7 @@
 
 ### Требования и установка
 
-**Windows 10/11 x64, MPC-HC x64, Direct3D 11 и совместимый GPU/драйвер.** Для NR и DLSS нужна NVIDIA; поддержку отдельных функций определяет соответствующий SDK.
+**Windows 10/11 x64, MPC-HC x64, Direct3D 11 и совместимый GPU/драйвер.** Для штатного NR и DLSS нужна NVIDIA; AMD NR требует отдельного runtime и HIP SDK. Поддержку отдельных функций определяет соответствующий SDK.
 
 1. Скачайте архив из [Releases](https://github.com/ivderezin/MPC-NeuralRenderer/releases/latest) и распакуйте в постоянную папку. DLL AMD/Intel включены.
 2. Для функций NVIDIA добавьте рядом с рендерером: `nvngx_dlssnr.dll` — NR, `nvngx_dlss.dll` — DLSS SR, `nvngx_dlssg.dll` — DLSS FG. Эти библиотеки устанавливаются отдельно.
@@ -66,6 +67,7 @@ An MPC-HC renderer with neural video rendering, upscaling and frame generation. 
 ### Features
 
 - **NVIDIA neural rendering:** 0–200% intensity, independent processing with presentation-time composition or processing before/after upscaling.
+- **AMD NR:** optional experimental HIP/ZLUDA backend before upscaling. [Runtime setup](docs/amd-nr.md).
 - **Upscaling:** DLSS SR, FSR 3.1 and XeSS. FSR is used automatically when DLSS is unavailable.
 - **Frame generation:** EchoFG by default, plus DLSS MFG, FSR FG and XeSS FG. EchoFG supports 2x / 3x / 4x; FSR FG supports 2x. DLSS/XeSS capabilities depend on the GPU and driver.
 - **Motion estimation:** EchoStorm coarse-to-fine by default; Fast block matching as a lighter alternative.
@@ -76,7 +78,7 @@ An MPC-HC renderer with neural video rendering, upscaling and frame generation. 
 
 ### Requirements and setup
 
-**Windows 10/11 x64, MPC-HC x64, Direct3D 11 and a compatible GPU/driver.** NR and DLSS require NVIDIA; each SDK determines feature support.
+**Windows 10/11 x64, MPC-HC x64, Direct3D 11 and a compatible GPU/driver.** Native NR and DLSS require NVIDIA; AMD NR requires a separate runtime and HIP SDK. Each SDK determines feature support.
 
 1. Download a [release](https://github.com/ivderezin/MPC-NeuralRenderer/releases/latest) and extract to a permanent folder. AMD/Intel runtimes are included.
 2. For NVIDIA features, add the separately installed libraries: `nvngx_dlssnr.dll` for NR, `nvngx_dlss.dll` for DLSS SR and `nvngx_dlssg.dll` for DLSS FG.
