@@ -61,8 +61,9 @@ bool AmdNr::Process(ID3D12GraphicsCommandList* list,ID3D12Resource* input,ID3D12
     intensity=std::clamp(intensity,0,200);
     if(p.intensity!=intensity || p.width!=width) {
         dlss5nr_settings settings{};settings.struct_size=sizeof(settings);p.defaults(&settings);settings.struct_size=sizeof(settings);
-        settings.enabled=intensity>0;settings.intensity=(std::min)(1.f,intensity/100.f);
-        settings.detail_strength=(std::max)(1.f,intensity/100.f);
+        const float strength=static_cast<float>(intensity)/100.f;
+        settings.enabled=intensity>0;settings.intensity=(std::min)(1.f,strength);
+        settings.detail_strength=(std::max)(1.f,strength);
         settings.resolution_scale=std::clamp(1280.f/static_cast<float>(width),.25f,1.f);
         settings.encoding=DLSS5NR_ENCODING_DISPLAY;settings.exposure_mode=DLSS5NR_EXPOSURE_FIXED;settings.exposure=1;
         settings.follow_motion=1;settings.network_history=0;
