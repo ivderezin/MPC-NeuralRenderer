@@ -96,6 +96,7 @@ void CVRMainPPage::SetControls()
 	CheckDlgButton(IDC_FG_LIMIT_DISPLAY, m_neuralSettings.limitGenerationToDisplay ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_DLSS_FG_GUARD, m_neuralSettings.dlssFgGuard ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_ECHO_PIPELINE, m_neuralSettings.echoPipeline ? BST_CHECKED : BST_UNCHECKED);
+	CheckDlgButton(IDC_AMD_NR, m_neuralSettings.amdNr ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_AMD_BRIDGE, m_neuralSettings.amdBridge ? BST_CHECKED : BST_UNCHECKED);
 	ComboBox_SelectByItemData(m_hWnd, IDC_MOTION_METHOD, static_cast<unsigned>(m_neuralSettings.motionMethod));
 	ComboBox_SelectByItemData(m_hWnd, IDC_NEURAL_INTENSITY, m_neuralSettings.intensity);
@@ -168,7 +169,8 @@ void CVRMainPPage::EnableControls()
 	GetDlgItem(IDC_DLSS_MFG).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_MFG_PRESENT_THREAD).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_FG_LIMIT_DISPLAY).EnableWindow(neuralAvailable);
-	GetDlgItem(IDC_ECHO_PIPELINE).EnableWindow(neuralAvailable);
+	GetDlgItem(IDC_ECHO_PIPELINE).EnableWindow(neuralAvailable && !m_neuralSettings.amdNr);
+	GetDlgItem(IDC_AMD_NR).EnableWindow(neuralAvailable);
 	GetDlgItem(IDC_DLSS_FG_GUARD).EnableWindow(neuralAvailable && m_neuralSettings.frameGenerator==processing::FrameGenerator::Dlss);
 	GetDlgItem(IDC_DLSS_SAVE_SAMPLE).EnableWindow(neuralAvailable && m_neuralSettings.frameGenerator==processing::FrameGenerator::Dlss && m_neuralSettings.frameMultiplier>1);
 	GetDlgItem(IDC_AMD_BRIDGE).EnableWindow(neuralAvailable);
@@ -176,7 +178,7 @@ void CVRMainPPage::EnableControls()
     for (int id : {IDC_SHADER_PRE_ADD, IDC_SHADER_PRE_CLEAR, IDC_SHADER_POST_ADD, IDC_SHADER_POST_CLEAR})
         GetDlgItem(id).EnableWindow(m_SetsPP.bUseD3D11);
 	GetDlgItem(IDC_NEURAL_INTENSITY).EnableWindow(neuralAvailable && m_neuralSettings.enabled);
-	GetDlgItem(IDC_NR_STAGE).EnableWindow(neuralAvailable && m_neuralSettings.enabled && !m_neuralSettings.echoPipeline);
+	GetDlgItem(IDC_NR_STAGE).EnableWindow(neuralAvailable && m_neuralSettings.enabled && !m_neuralSettings.echoPipeline && !m_neuralSettings.amdNr);
 
 	if (!IsWindows8OrGreater()) { // Windows 7
 		const BOOL bEnable = !m_SetsPP.bUseD3D11;
@@ -452,6 +454,10 @@ INT_PTR CVRMainPPage::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
             if (nID == IDC_DLSS_SAVE_SAMPLE) {
                 framegen::DlssSampleCapture::Request();
                 return (LRESULT)1;
+            }
+            if (nID == IDC_AMD_NR) {
+                m_neuralSettings.amdNr=IsDlgButtonChecked(IDC_AMD_NR)==BST_CHECKED;
+                EnableControls();SetDirty();return (LRESULT)1;
             }
             if (nID == IDC_DLSS_FG_GUARD) {
                 m_neuralSettings.dlssFgGuard=IsDlgButtonChecked(IDC_DLSS_FG_GUARD)==BST_CHECKED;

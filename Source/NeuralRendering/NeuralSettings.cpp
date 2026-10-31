@@ -8,6 +8,9 @@ constexpr auto Key = L"Software\\MPC Neural Renderer";
 Settings Settings::Load() {
     Settings settings;
     DWORD value = 0, size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER, Key, L"AmdNr", RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS)
+        settings.amdNr = value != 0;
+    size = sizeof(value);
     if (RegGetValueW(HKEY_CURRENT_USER, Key, L"DlssFgGuard", RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS)
         settings.dlssFgGuard = value != 0;
     size = sizeof(value);
@@ -87,6 +90,9 @@ long Settings::Save() const {
     if (error == ERROR_SUCCESS)
         error = RegSetValueExW(key, L"NrStage", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&nrStageValue),
                                sizeof(nrStageValue));
+    DWORD amdNrValue = amdNr ? 1 : 0;
+    if (error == ERROR_SUCCESS)
+        error = RegSetValueExW(key,L"AmdNr",0,REG_DWORD,reinterpret_cast<const BYTE*>(&amdNrValue),sizeof(amdNrValue));
     DWORD bridgeValue = amdBridge ? 1 : 0;
     if (error == ERROR_SUCCESS)
         error = RegSetValueExW(key, L"AmdBridge", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&bridgeValue), sizeof(bridgeValue));

@@ -23,6 +23,8 @@ $imageOutput = Join-Path $output 'docs/images'
 New-Item -ItemType Directory -Force $imageOutput | Out-Null
 Copy-Item (Join-Path $root 'docs/images/*.jpg') $imageOutput
 Copy-Item (Join-Path $root 'docs/dlss-fg-investigation.md') (Join-Path $output 'docs')
+Copy-Item (Join-Path $root 'docs/amd-nr.md') (Join-Path $output 'docs')
+Copy-Item (Join-Path $root 'Source/NeuralRendering/AmdRuntime/LICENSE.txt') (Join-Path $output 'AMD-NR-RUNTIME-LICENSE.txt')
 $replayDocs = Join-Path $output 'tools/replay'
 New-Item -ItemType Directory -Force $replayDocs | Out-Null
 Copy-Item (Join-Path $root 'tools/replay/Replay-README.md') $replayDocs

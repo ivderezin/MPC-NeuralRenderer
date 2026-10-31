@@ -174,6 +174,8 @@
     <ClInclude Include="EchoStorm\addon\auto_quality.h" />
     <ClInclude Include="NeuralRendering\NeuralPass.h" />
     <ClInclude Include="NeuralRendering\NeuralSettings.h" />
+    <ClInclude Include="NeuralRendering\AmdNr.h" />
+    <ClInclude Include="NeuralRendering\AmdRuntime\dlss5nr.h" />
     <ClInclude Include="NeuralRendering\FrameHistory.h" />
     <ClInclude Include="NeuralRendering\AsyncOutput.h" />
     <ClInclude Include="NeuralRendering\MotionShaders.h" />
@@ -263,4 +265,7 @@
   <ItemGroup><ClInclude Include="FrameGeneration\DlssCaptureCamera.h" /></ItemGroup>
   <ItemGroup><ClInclude Include="Processing\LoadedModules.h" /></ItemGroup>
   <ItemGroup><ClInclude Include="FrameGeneration\DlssSampleCapture.h" /><ClCompile Include="FrameGeneration\DlssSampleCapture.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile></ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="NeuralRendering\AmdNr.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+  </ItemGroup>
 </Project>

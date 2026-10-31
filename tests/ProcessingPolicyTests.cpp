@@ -51,6 +51,11 @@ int main() {
     try {upscaling::CreateWithFallback(Upscaler::Dlss,false,[](Upscaler){throw std::runtime_error("FSR unavailable");});}
     catch(const std::runtime_error&){failed=true;}
     Require(failed,"An unavailable fallback must remain an error");
+    Require(selection.IndependentNr(),"Native independent NR must remain the default route");
+    selection.amdNr=true;
+    Require(!selection.IndependentNr(),"AMD NR must not run the NVIDIA presentation compositor");
+    selection.amdNr=false;
+    Require(selection.IndependentNr(),"Disabling AMD NR must restore the saved native route");
     selection.upscaler=processing::Upscaler::Fsr;
     selection.frameGenerator=processing::FrameGenerator::Xess;selection.frameMultiplier=4;
     Require(!selection.ManualGeneration(),"XeSS must use its presentation backend");

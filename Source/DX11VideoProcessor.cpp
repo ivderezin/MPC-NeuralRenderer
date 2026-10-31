@@ -385,7 +385,7 @@ CDX11VideoProcessor::CDX11VideoProcessor(CMpcVideoRenderer* pFilter, const Setti
 {
 	m_processingSettings = neural::Settings::Load();
 	auto stageSettings=m_processingSettings;
-	if (stageSettings.echoPipeline) stageSettings.enabled=false;
+	if (stageSettings.IndependentNr()) stageSettings.enabled=false;
 	m_neuralPass.Configure(stageSettings);
 	m_bShowStats           = config.bShowStats;
 	m_iResizeStats         = config.iResizeStats;
@@ -3161,7 +3161,7 @@ HRESULT CDX11VideoProcessor::Render(int field, const REFERENCE_TIME frameStartTi
 	} else if (m_mfgActive) StopMfgPresentation();
 
 	if (!m_pPSHalfOUtoInterlace) {
-		if (m_processingSettings.echoPipeline && m_processingSettings.enabled && !m_processingSuspended)
+		if (m_processingSettings.IndependentNr() && m_processingSettings.enabled && !m_processingSuspended)
 			m_echoNr.Compose(m_pDeviceContext,pBackBuffer,m_videoRect,
 				m_neuralPass.OutputSerial() ? m_neuralPass.OutputTimestamp() : m_neuralFrameTimestamp,false,m_pipelineRotation,m_bFlip);
 		DrawSubtitles(pBackBuffer);
@@ -3304,7 +3304,7 @@ HRESULT CDX11VideoProcessor::DrawPresentationFrame(ID3D11Texture2D* frame,long l
 		const float black[4] = {0,0,0,1}; m_pDeviceContext->ClearRenderTargetView(target,black);
 	}
 	hr = DrawProcessedTexture(texture,backBuffer,CRect(0,0,texture.desc.Width,texture.desc.Height),m_videoRect,m_pipelineRotation);
-	if (SUCCEEDED(hr) && m_processingSettings.echoPipeline && m_processingSettings.enabled)
+	if (SUCCEEDED(hr) && m_processingSettings.IndependentNr() && m_processingSettings.enabled)
 		m_echoNr.Compose(m_pDeviceContext,backBuffer,m_videoRect,timestamp,generated,m_pipelineRotation,m_bFlip);
 	if (SUCCEEDED(hr)) DrawSubtitles(backBuffer);
 	if (SUCCEEDED(hr)) DrawProcessingMessage(backBuffer);
@@ -4556,10 +4556,10 @@ void CDX11VideoProcessor::Configure(const Settings_t& config)
             || previousProcessing.motionMethod != m_processingSettings.motionMethod
             || previousProcessing.limitGenerationToDisplay != m_processingSettings.limitGenerationToDisplay);
 	auto stageSettings=m_processingSettings;
-	if (stageSettings.echoPipeline) stageSettings.enabled=false;
+	if (stageSettings.IndependentNr()) stageSettings.enabled=false;
 	auto previousStage=previousProcessing;
-	if (previousStage.echoPipeline) previousStage.enabled=false;
-	if (previousProcessing.echoPipeline!=m_processingSettings.echoPipeline || !m_processingSettings.enabled) m_echoNr.Reset();
+	if (previousStage.IndependentNr()) previousStage.enabled=false;
+	if (previousProcessing.echoPipeline!=m_processingSettings.echoPipeline || previousProcessing.amdNr!=m_processingSettings.amdNr || !m_processingSettings.enabled) m_echoNr.Reset();
 	m_neuralPass.Configure(stageSettings);
 	auto historySettings=stageSettings; historySettings.dlssFgGuard=previousStage.dlssFgGuard;
 	if (historySettings!=previousStage) m_neuralPass.ClearHistory();
@@ -5172,7 +5172,7 @@ HRESULT CDX11VideoProcessor::DrawStats(ID3D11Texture2D* pRenderTarget)
 	str.assign(m_strStatsHeader);
 	str.append(m_processingSuspended ? std::wstring(L"\nNeural processing: suspended (Ctrl+Alt+R)")
 		: L"\n" + m_neuralPass.Status());
-	if (m_processingSettings.echoPipeline && m_processingSettings.enabled && !m_processingSuspended)
+	if (m_processingSettings.IndependentNr() && m_processingSettings.enabled && !m_processingSuspended)
 		str += L"\n"+m_echoNr.Status();
 	if (m_processingSettings.frameGenerator == processing::FrameGenerator::Xess && m_processingSettings.frameMultiplier > 1) {
 		str += L"\n" + (m_xessPresenter.Status().empty()

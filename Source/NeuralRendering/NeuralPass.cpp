@@ -6,6 +6,7 @@
 #include "MotionShaders.h"
 #include "../FrameGeneration/EchoFrameGeneration.h"
 #include "MotionRepair.h"
+#include "AmdNr.h"
 #include "../FrameGeneration/FrameContentProbe.h"
 #include "../FrameGeneration/ExactInputRepeat.h"
 #include "../Upscaling/UpscaleStage.h"
@@ -243,6 +244,9 @@ struct NeuralPass::Impl {
     bool haveDistinctTimestamp=false;
     bool diagnosticsEnabled = false, diagnosticsFailed = false;
     Settings options;
+    AmdNr amdNr;
+    SharedTexture amdDepth;
+    bool amdNrUsable=false;
     processing::Upscaler activeUpscaler=processing::Upscaler::Off;
     upscaling::Extent target{}, monitor{};
     double refreshHz = 60;
@@ -297,6 +301,7 @@ struct NeuralPass::Impl {
             WaitForSubmission();
         } catch (...) {
         }
+        amdNr.Reset();
         superResolution.Reset();
         frameGeneration.Reset();
         for (auto* nr : {&nrPre, &nrPost}) {
@@ -360,7 +365,9 @@ struct NeuralPass::Impl {
         std::wostringstream message;
         message << L"Motion: " << neural::Name(options.motionMethod) << (options.motionMethod==MotionMethod::EchoStorm ? L" (native D3D12)" : L"") << L"\n";
         if (hdr) message << L"HDR: PQ / BT.2020, SDR proxy + linear-light residual, 10-bit output\n";
-        if (options.enabled) {
+        if (options.enabled && options.amdNr) {
+            message << (nrFailure.empty() ? amdNr.Status() : nrFailure);
+        } else if (options.enabled) {
             if (!nrUsable && !nrPostUsable)
                 message << L"NR: " << (nrFailure.empty() ? nrPostFailure : nrFailure);
             else {
@@ -433,6 +440,7 @@ struct NeuralPass::Impl {
         Check(list->Close(), "Close command list");
         ID3D12CommandList* commands[] = {list.Get()};
         queue->ExecuteCommandLists(1, commands);
+        amdNr.Submitted(queue.Get());
         const auto signal = ++fenceValue;
         Check(queue->Signal(fence12.Get(), signal), "Signal D3D12 fence");
         submitted = signal;
@@ -551,7 +559,7 @@ struct NeuralPass::Impl {
         auto directory = ModuleDirectory();
         std::wstring ngxFailure;
         const auto modelDir = directory.wstring();
-        if (options.enabled || options.upscaler == processing::Upscaler::Dlss ||
+        if ((options.enabled && !options.amdNr) || options.upscaler == processing::Upscaler::Dlss ||
             (options.ManualGeneration() && options.frameGenerator == processing::FrameGenerator::Dlss)) {
             try {
                 if (adapterDesc.VendorId != 0x10de)
@@ -578,7 +586,17 @@ struct NeuralPass::Impl {
         }
         Begin();
         bool nrLoaded = false;
-        if (options.enabled) {
+        if (options.enabled && options.amdNr) {
+            try {
+                if(adapterDesc.VendorId!=0x1002)throw std::runtime_error("AMD Radeon GPU required for the optional NR runtime");
+                amdNr.Create(device12.Get(),directory/L"amd-nr");
+                amdDepth.Create(device,device12.Get(),width,height,DXGI_FORMAT_R32_FLOAT);
+                const float plane[4]={.5f,.5f,.5f,.5f};
+                context11->ClearUnorderedAccessViewFloat(amdDepth.uav.Get(),plane);
+                amdNrUsable=true;
+            }catch(const std::exception& error){nrFailure=L"AMD NR: "+ngx::Message(error);}
+        }
+        if (options.enabled && !options.amdNr) {
             try {
                 if (!coreInitialized)
                     throw std::runtime_error(std::string(ngxFailure.begin(), ngxFailure.end()));
@@ -764,6 +782,10 @@ struct NeuralPass::Impl {
             transition.StateAfter = begin ? state : D3D12_RESOURCE_STATE_COMMON;
         }
         list->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+        if(amdDepth.resource)
+            ngx::Transition(list.Get(),amdDepth.resource.Get(),
+                begin ? D3D12_RESOURCE_STATE_COMMON : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                begin ? D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE : D3D12_RESOURCE_STATE_COMMON);
         if (distrust.resource)
             ngx::Transition(list.Get(), distrust.resource.Get(),
                 begin ? D3D12_RESOURCE_STATE_COMMON : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
@@ -782,7 +804,7 @@ struct NeuralPass::Impl {
             try { contentProbe.Collect(context11.Get()); }
             catch (...) { diagnosticsFailed=true; }
         }
-        if (!nrUsable && !nrPostUsable && !srUsable && !fgUsable && !recreateFG) {
+        if (!nrUsable && !nrPostUsable && !amdNrUsable && !srUsable && !fgUsable && !recreateFG) {
             asyncOutput.Invalidate();
             published = nullptr;
             generatedCount = 0;
@@ -925,7 +947,7 @@ struct NeuralPass::Impl {
         Check(queue->Wait(fence12.Get(), ready), "D3D12 wait");
         Transition(true);
         list->EndQuery(timingQueries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
-        if (options.motionMethod == MotionMethod::EchoStorm && (nrUsable || nrPostUsable || srUsable)) {
+        if (options.motionMethod == MotionMethod::EchoStorm && (nrUsable || nrPostUsable || amdNrUsable || srUsable)) {
             echoMotion.Dispatch(list.Get(),color.resource.Get(),{},0,reset);
             const float fastMotion=srUsable ? static_cast<float>(width)*(this->target.width==width && this->target.height==height ? .001f : .0005f) : 0.f;
             echoMotion.WriteGuidance(list.Get(),repairedVectors.resource.Get(),upscaleDistrust.resource.Get(),fastMotion);
@@ -935,6 +957,13 @@ struct NeuralPass::Impl {
         pendingScaled = false;
         pendingHasFG = false;
         bool outputRead = false;
+        if(amdNrUsable) {
+            if(amdNr.Process(list.Get(),color.resource.Get(),output.resource.Get(),temporalVectors.resource.Get(),
+                             amdDepth.resource.Get(),width,height,options.intensity,reset)) {
+                ngx::Transition(list.Get(),output.resource.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                outputRead=true;finalColor=output.resource.Get();pendingReal=output.texture.Get();
+            } else {amdNrUsable=false;nrFailure=amdNr.Status();fgNeedsReset=true;}
+        }
         if (nrUsable) {
             const auto result = EvaluateNr(nrPre, color.resource.Get(), output.resource.Get(), temporalVectors.resource.Get(),
                                            depth.resource.Get(), reset);
