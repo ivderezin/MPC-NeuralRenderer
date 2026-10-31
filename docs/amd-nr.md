@@ -63,5 +63,6 @@ No translation or downloads are enabled by the renderer.
 
 Host tests use a test-only C API DLL and D3D12 WARP to exercise startup passthrough,
 resource states, submit notification, settings, failure reporting and GPU-idle
-destruction. They do not execute the AMD network. Real Radeon inference, visual
-quality, performance and HIP/cache compatibility require hardware validation.
+destruction. They do not execute the AMD network. Radeon RX 7900 XT operation
+was also confirmed in a hardware playback test; other GPUs and runtime bundles
+may behave differently.
